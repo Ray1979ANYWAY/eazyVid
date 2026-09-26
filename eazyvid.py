@@ -381,6 +381,13 @@ class Sniffer:
             self.ws.send(json.dumps({"id": 1, "method": "Network.enable"}))
             self.ws.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
             self.log_cb("嗅探：已连接，请在播放窗口打开/刷新视频页并点击播放")
+            # 自动刷新一次：部分播放器加载过快（流请求早于嗅探连接），刷新可重新触发
+            time.sleep(1.5)
+            try:
+                self.ws.send(json.dumps({"id": 3, "method": "Page.reload"}))
+                self.log_cb("嗅探：已自动刷新播放页（重新触发视频流请求）")
+            except Exception:
+                pass
             while self.running:
                 try:
                     msg = json.loads(self.ws.recv())
@@ -1389,7 +1396,7 @@ class App:
                         pass
                 elif kind == "sniff_timeout":
                     messagebox.showinfo("未捕获到视频",
-                        "这一分钟内没有嗅探到视频文件。\n请确认已在播放窗口打开视频页并点击播放，然后重新点「探测格式」。")
+                        "这一分钟内没有嗅探到视频文件。\n常见原因：播放器加载过快，视频流请求早于嗅探连接。\n请在播放窗口按 F5 刷新页面（重新触发视频流请求），\n然后重新点「探测格式」。")
                 elif kind == "ui":
                     self._ui_event(item[1])
                 elif kind in ("added", "progress", "paused"):
