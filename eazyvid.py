@@ -422,8 +422,10 @@ class Sniffer:
                     if self._base_path is None:
                         self._base_path = vp
                     elif vp and vp != self._base_path:
-                        self.log_cb(f"嗅探：检测到页面跳转/推荐视频流（与当前视频不同），已忽略：{url}")
-                        continue
+                        # m3u8/mpd 清单豁免：主视频 HLS/DASH 常与广告/预览流不同路径，不忽略
+                        if not re.search(r'\.(m3u8|mpd)(\?|$)', url):
+                            self.log_cb(f"嗅探：检测到页面跳转/推荐视频流（与当前视频不同），已忽略：{url}")
+                            continue
                     self.seen.add(url)
                     self._captured = True
                     self.log_cb("嗅探：捕获 " + url)
