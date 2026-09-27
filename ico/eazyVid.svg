@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- 1. 中心圆渐变：沿左下至右上对角线（蓝 -> 深蓝 -> 紫色） -->
+    <linearGradient id="circleDiagonalGrad" x1="15%" y1="85%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#005CE6"/>
+      <stop offset="25%" stop-color="#0C34B8"/>
+      <stop offset="55%" stop-color="#14185E"/>
+      <stop offset="80%" stop-color="#501A94"/>
+      <stop offset="100%" stop-color="#7B2CBF"/>
+    </linearGradient>
+
+    <!-- 2. 左下角直角标：取最靠近它的蓝色渐变色 -->
+    <linearGradient id="bracketBL" x1="0%" y1="100%" x2="50%" y2="50%">
+      <stop offset="0%" stop-color="#005CE6"/>
+      <stop offset="100%" stop-color="#0A44C9"/>
+    </linearGradient>
+
+    <!-- 3. 右上角直角标：取最靠近它的紫色渐变色 -->
+    <linearGradient id="bracketTR" x1="50%" y1="50%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6F22B5"/>
+      <stop offset="100%" stop-color="#7B2CBF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. 白底异形底盘（两直角 + 两圆角，外侧画布 100% 透明，零虚影） -->
+  <path d="M 152 32 
+           L 480 32 
+           L 480 360 
+           C 480 426.27 426.27 480 360 480 
+           L 32 480 
+           L 32 152 
+           C 32 85.73 85.73 32 152 32 
+           Z" 
+        fill="#FFFFFF"
+        stroke="#E5E7EB" 
+        stroke-width="2"/>
+
+  <!-- 2. 右上角对角压缩直角标（与右上紫色端严格同色） -->
+  <path d="M 336 64 H 448 V 176 H 420 V 92 H 336 Z" fill="url(#bracketTR)"/>
+
+  <!-- 3. 左下角对角压缩直角标（与左下蓝色端严格同色） -->
+  <path d="M 64 336 V 448 H 176 V 420 H 92 V 336 Z" fill="url(#bracketBL)"/>
+
+  <!-- 4. 中心圆（沿直角对角线流动的蓝 -> 深蓝 -> 紫渐变） -->
+  <circle cx="256" cy="256" r="144" fill="url(#circleDiagonalGrad)"/>
+
+  <!-- 5. 纯白播放三角（纯平锐利、微圆角防生硬，零阴影） -->
+  <path d="M 218 188 
+           C 212 184 204 188 204 196 
+           L 204 316 
+           C 204 324 212 328 218 324 
+           L 316 264 
+           C 322 260 322 252 316 248 
+           Z" 
+        fill="#FFFFFF"/>
+</svg>
