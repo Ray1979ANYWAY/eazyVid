@@ -483,3 +483,127 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 实现：_estimate_eta 模块级函数（窗口=最近 15 秒时间为主 + 30 点上限，对速度突变有一定跟随；采样 <3s 或进展 <0.2% 不估显示 "--"）；worker prog 每次回调采样并写 rec["eta"]；_fmt_eta 显示自适应（约N秒/约N分/约N时M分）；CompressRow 新建 _txt_eta 文字（布局 pct<eta<state），refresh 仅压缩中显示、其余清空。
 - 阈值迭代：初版 1% 阈值 + 10 点/20s 窗口 → 慢速大文件（0.5%/20s 级，如 1080p x265 24 分钟片源）在 3% 时窗口进展 <1% 永远显示 "--"；改 0.2% 阈值 + 15s 时间窗为主。
 - 验证：2%/s→40s、降速 1%/s→约50s（窗口反映后段速度）、慢速 0.028%/s → 3.05% 时 ETA≈3462s（约58分）、布局 pct<eta<state、非执行态隐藏。test_v2/smoke_v2 全绿。
+### 2026-09-27 下载池完成态删除：弹窗改鼠标旁两行菜单
+- 需求：完成态（done）任务点删除时不用系统弹窗，鼠标旁直接弹出两行选择：仅移出列表 / 移出列表并删除文件。
+- 实现：_on_delete 对 done+文件存在 → tk.Menu 两行 + tk_popup(winfo_pointerx/y)（鼠标当前位置弹出）；新增 _finish_delete(delete_file)（True=删文件+移除任务，False=仅移除）；下载中/暂停仍走原系统弹窗；done 但文件已不存在 → 直接移除不弹菜单。
+- 验证：菜单项=两行正确；仅移出→任务移除文件保留；移出并删→任务移除文件删除；无文件→直接移除。test_v2/smoke_v2 全绿。
+- ETA 平滑（EMA）：用户 2% 时 ETA 约 40 分、18% 时仍 30-40 分，怀疑估算的是总时间。确认算法本就是剩余时间（(100-p)/速度，2%→40 分=总时长 41 分，18% 应按 82/98 比例≈33 分）；波动源是 x265 画面复杂度变化导致 15s 窗口瞬时速度估算偏高。修复：窗口瞬时速度叠 EMA（alpha=0.4，状态存 rec["_eta_ema"]）。验证稳定速度下 ETA 单调递减（2%→49分/18%→41分/50%→25分/80%→10分，总时长恒定 50 分），速度突变仍能跟随。test_v2/smoke_v2 全绿。
+### 2026-09-27 进度条右缘=按钮左缘 + 结束行显示压缩时长 + 打开所在文件夹修复
+- 进度条：100% 淡蓝矩形只覆盖到右侧按钮组左缘（压缩中=终止按钮左缘），不覆盖任何按钮；93% 实测蓝右缘<按钮左缘。
+- 结束行（done）：新增执行时长显示（worker 记录 rec["_t0"]/rec["elapsed"]，_fmt_elapsed 显示 45秒/5分30秒/1时23分），行文本=原大小 → 压缩后大小 (压缩比) · 用时。踩坑：refresh 里残留一处旧时长拼接导致显示两次，删除后单次。
+- 打开所在文件夹修复：explorer /select, 与路径拆成两个参数（中间空格）在部分 Win 版本解析失败打开"此电脑"；改为拼成单参数 "/select,"+path。验证：done 行 1KB→512B (50%) · 1时23分 单次显示；进度 100%=终止按钮左缘。test_v2/smoke_v2 全绿。
+### 2026-09-27 压缩任务列表支持文件拖放（排在队尾）
+- 需求：任务列表支持把文件直接拖进来，排在队尾。
+- 实现：安装 tkinterdnd2（DND 库）；main() 根窗口 _HAVE_DND 时用 TkinterDnD.Tk()（测试脚本仍可用普通 tk.Tk()，注册 drop 时 try/except 兜底）；压缩列表容器 _cp_canvas/_cp_inner 注册 DND_FILES + <<Drop>> → _on_drop_files：解析 DND 路径（花括号包裹含空格路径）、过滤视频扩展名、逐个 cqueue.add(默认压缩模式) 排队尾（不自动开始）。
+- 验证：视频入队/非视频过滤/模式取默认；已有任务顺序不变、新拖入排在队尾；含空格路径正常。test_v2/smoke_v2 全绿。
+### 2026-09-27 下载页：粘贴按钮 + 回车直接探测
+- URL 地址栏右侧新增「粘贴」按钮（位于「探测格式」左侧）：一键读取剪贴板 → 走 _paste_url_extract 自动提取分享文本中的 URL 填入（清空原有）；URL 输入框绑定 <Return> → 直接触发 on_probe。
+- 验证：按钮顺序 粘贴<探测格式、回车绑定、剪贴板抖音分享文本提取出短链。test_v2/smoke_v2 全绿。
+### 2026-09-27 设置弹窗：同时压缩数改为上下箭头 Spinbox
+- 需求：设置里「同时压缩数」输入框增加上箭头/下箭头增减。
+- 实现：ttk.Entry → ttk.Spinbox（from_=1, to=16, increment=1），保留数字校验（只接受阿拉伯数字）与 workers_var 绑定。
+- 验证：Spinbox 范围 1~16、确定后 max_workers 应用（3→4）。test_v2/smoke_v2 全绿。
+### 2026-09-27 终止态任务"重新压缩"按钮（排到队尾）
+- 需求：终止态（stopped）任务行增加「重新压缩」按钮，单任务从头重压；重压后任务排到队尾。
+- 实现：CompressRow 新增 restart_btn（stopped 显示、其余状态每次刷新显式隐藏兜底）+ _on_restart；CompressQueue.restart(rec)：仅恢复该 rec（stopped→queued、进度/eta/out 清零、移到 tasks 末尾排到队尾），不连带其他 stopped；refresh else 分支重构（stopped 显示/非 stopped 强制 hidden）。
+- 修复既有 bug：worker 压缩完成时不写 rec["out"] → done 行"压缩后大小 (压缩比) · 用时"一直不显示；worker 完成后 `if ok and out: rec["out"] = out` 补上。
+- 验证：stopped 显示/queued 隐藏按钮；点重压后单任务恢复（另一 stopped 不受连带）且排到队尾（tasks B→A）；高码率源重压走完 done、out 存在；done 行显示 "1.2MB → 458KB (37%) · 5秒"。test_v2/smoke_v2 全绿。
+- 教训：多段字符串替换必须在同一内存 $t 上连续做、最后一次性写盘；中间重新 ReadAllText 会覆盖未落盘修改；落盘确认用唯一锚点（注释文本），避免误匹配既有代码。
+### 2026-09-27 压缩行拖放视觉（长卡片拎起）+ 修复重压按钮布局缺失
+- 需求：排队行拖放时像拖一张长卡片（有视觉变化，不看文件名也知道在拖）；此前拖动无任何视觉反馈。
+- 实现：_drag_start 拎起视觉（行底色变淡蓝 #E3EFFF + canvas 内画 2px 蓝色边框 dragbox）；_drag_motion（<B1-Motion>）行用 place 跟随鼠标纵向移动（relwidth=1.0 撑满宽度，像卡片被拎起）；_drag_end 落回（bg 恢复、删 dragbox、place_forget 恢复 pack）后照常计算目标行 move+reorder。
+- 踩坑：highlightthickness=2 改变 widget 尺寸触发 pack 重排链导致 root.update() 挂起 → 改 canvas 内部画边框（不动 widget 尺寸）解决；Canvas 的 lift()/tkraise() 是 tag_raise（需要 tag 参数）→ 弃用（place 浮起的行天然在 pack 之上）。
+- 修复布局缺失：_layout 的 restart 分支在前几轮替换中被覆盖丢失（stopped 行"重新压缩"按钮被放到不可见初始位置 (0,15)）→ 补回 del 后/stop 前的 restart 分支；验证按钮 state=normal 且位于行内右侧。
+- 验证：拎起（bg+边框）/拖动中（place 跟随）/落回（恢复+顺序调整）三步全通过；restart 按钮坐标在行内。test_v2/smoke_v2 全绿。
+### 2026-09-27 直接退出程序时清理进行中任务的残留文件
+- 需求：直接退出（不先终止任务）时，压缩到一半的缓存没有清除；确认下载到一半的视频是否也会清除。
+- 结论（修复前）：_on_exit 只杀进程树，不删任何文件 → 压缩中间输出（xxx_压缩.mp4 不完整文件）和下载 .part 临时目录（.eazyvid_xxx_pid/）都会残留。
+- 修复：_on_exit 杀下载进程后 rmtree 该任务 tmpdir（含 .part）；杀压缩进程后按"终止"语义删除不完整输出（源同目录 xxx_压缩.mp4 + rec["out"]，重试 3 次防文件锁）。
+- 验证：模拟下载中+压缩中任务 → 退出后 tmpdir/.part 与不完整输出均删除、源文件保留；有进行中任务仍先弹确认窗。test_v2/smoke_v2 全绿。
+### 2026-09-27 拖放改为"挤压式"（实时让位），去掉浮起跟手
+- 问题（用户反馈）：上一版"拎起卡片"浮起后①没浮到最上层被文件名更长的行遮住（z-order 问题，Canvas widget 无法可靠 raise）；②放下位置偏离鼠标松开处（跟手 place 导致目标行计算错乱）。预期交互：拎起一行移动时，鼠标位置以下的行被往下挤。
+- 重设计：拖动行**不浮起**，保持原槽位高亮（淡蓝底色 #E3EFFF + 2px 蓝色边框 dragbox）；拖动中按鼠标 y 计算插入点（行上半→插到该行前，下半→插到该行后）实时 cqueue.move + reorder + relayout → 其他行实时让位；松开只去高亮，位置已在拖动中落定（落点=松开处）。
+- 锁定区：结束态(done/stopped/skipped/failed)+压缩中行固定最上，target 强制 >= locked 不可插入其中。
+- 验证：拎起不浮起(place={})；第3行上半插到 idx2、第4行下半插到 idx4；松开保持位置；锁定1行后拖顶部仍 >=1。test_v2/smoke_v2 全绿。
+### 2026-09-27 修复：文件拖放（DND）在任务行上不生效
+- 问题（用户反馈）：文件拖放没实现——把文件拖到压缩任务列表的"行"上无反应。
+- 根因：DND drop 只注册在列表容器（_cp_canvas/_cp_inner），而任务行是独立的 Canvas 子控件（占列表绝大部分面积），拖放到行上时事件被行控件吃掉，不冒泡到容器 → 只有拖到行间缝隙才生效，实际体验=没实现。
+- 修复：CompressRow 创建时给行 frame 也 drop_target_register(DND_FILES) + dnd_bind(<<Drop>> → app._on_drop_files)，拖到任意一行都能把文件排入队尾。
+- 验证：行 frame dnd_bind 存在、拖放（含空格路径 b mkv video.mkv）排队尾 2->3。test_v2/smoke_v2 全绿。
+### 2026-09-27 修复：文件拖放"拖不了"——根因是运行环境缺 tkinterdnd2
+- 现象：上轮加了行级 DND 注册后，用户实测仍拖不了。
+- 根因（重大教训）：用户实际运行程序用的是 D:\Program Files\Python\Python310\pythonw.exe（eazyvid.bat 的 fallback），而 **Python 3.10 没装 tkinterdnd2** → _HAVE_DND=False → 程序退回 tk.Tk()，所有 DND 注册代码不执行。此前所有 DND 验证都在豆包沙箱 python（自带 tkinterdnd2）下跑，测试全绿但≠用户环境。
+- 修复（治本、自包含）：把 tkinterdnd2 包（2.45MB，含各平台 tkdnd 二进制）内置到项目 D:\Documents\eazyVid\vendor\tkinterdnd2；eazyvid.py 顶部 sys.path.insert(0, vendor) 后 import，任何 Python 环境无需 pip 即可用文件拖放。
+- 验证：改用 Python 3.10 跑完整验证——_HAVE_DND=True、行级 dnd 注册、拖放排队尾 2->3 全绿；test_v2/smoke_v2 在 py310 下全绿。
+- 提醒：旧实例（py310 旧版）仍在跑，需关闭后重启新版才生效。
+### 2026-09-27 硬性约定：eazyVid 验证必须用本地 Python 3.10
+- 背景：DND"拖不了"的根因是验证环境（豆包沙箱 python 3.14，自带 tkinterdnd2）≠ 用户运行环境（本地 Python 3.10，无 tkinterdnd2），导致测试全绿但实际不可用。
+- 约定（以后所有 eazyVid 相关验证都必须遵守）：
+  1. 一律用 `D:\Program Files\Python\Python310\python.exe` 跑回归（test_v2.py / smoke_v2.py / 任何 eazyvid 行为验证），与 eazyvid.bat 实际运行解释器一致。
+  2. **禁止**用豆包沙箱 python（Doubao User Data\sandbox_runtime\...，3.14）验证 eazyvid——环境差异（缺 tkinterdnd2、版本行为不同）会造成假阳性。
+  3. 项目根已建 `run_tests.bat`：固定调用本地 Python310 跑 test_v2 + smoke_v2（用户可双击，带 pause）。
+- 沙箱 python 是豆包内部隔离运行时（不能删、不在用户 PATH、不影响用户环境）；用户本地只有 Python 3.10。
+- 同轮完成：清理 Python310 site-packages 的 ComfyUI/IOPaint 时代残留库 100+ 个（813.9MB→76.8MB，释放 737MB），保留工具库（GitPython/PyGithub/pyinstaller/uv/ruff/pytesseract/edge-tts/pydub/pywin32 等）；eazyvid 加载正常、DND 正常。此清理与项目无关，仅环境维护，不展开记录。
+### 2026-09-27 拖放改"跟手+挤压"版：修复 z-order（Canvas 行 raise 报错）与抖动
+- 用户反馈：挤压式拖放行抖动、拖动行不跟鼠标；问是否 Tk 能力限制。
+- 根因1（不跟手）：上一版拖动行不浮起只高亮。改为：拖动行 place 跟随鼠标（行中心对齐鼠标 y）+ 跨行时其他行实时让位（move+relayout(skip=拖动行)）。
+- 根因2（z-order）：**行 frame 是 Canvas（winfo class=Canvas）**——`frame.tkraise()` 被 Tcl 解析成 canvas 的 tag 子命令 → 报 `wrong # args: should be canvas raise tagOrId`（被 except 吞掉 → 拖动行从未浮起 = 早期"拎起行被遮"的真正根因）。修复：用**全局 raise 命令** `frame.tk.call("raise", frame._w)`（隔离测试证明对 tk.Frame/tk.Canvas/ttk.Frame 均有效）。
+- 根因3（抖动）：motion 里 move+relayout 后未即时刷新，布局"追不上"鼠标。修复：relayout 后 `root.update_idletasks()` 即时重排；relayout 加 `skip=拖动行` 参数（拖动行保持 place，不被 pack 清掉）。
+- 验证：拎起原位高亮、拖动行 y 跟鼠标(130→115)、跨行让位 idx 0→4、松开 place_forget+pack 回位置保持；**截图像素统计：拖动行区域 386x30 内淡蓝 2729 像素/灰 0 —— 确认浮最上未被遮**。test_v2/smoke_v2 全绿。
+- 教训补充：winfo_containing 对隐藏 tab 的 Treeview 会误命中（不可靠）；z 序验证用真实渲染截图像素统计最可靠。
+### 2026-09-27 拖放终版：压缩列表改 place 手动布局 → "挤开感"实现
+- 用户第 4 轮反馈"没有挤开感、不知道落到哪"：pack 布局下拎起一行，pack 几何管理器立即让其余行补位（Tk 行为，无法阻止）→ 视觉就是"空位顶上"。
+- 彻底解法：**压缩列表从 pack 改为 place 手动布局**（_relayout_compress_rows：每行 place(x=0, y=2+i*34, relwidth=1.0, height=30)，inner 手动设高度 + scrollregion 刷新）。
+- 拖动逻辑（_drag_start/_drag_motion/_drag_end）：
+  1) start：place 原位 + 全局 raise 浮最上 + 淡蓝高亮；**快照其他行原位 y（_drag_orig_y）**；**其他行不动（place 不自动补位）**。
+  2) motion：拖动行 place 跟手（行中心对齐鼠标 y）+ 浮最上；落点用**含拖动行布局**判定（i==src 保持原位不敏感；跨行按行上半/下半定插入位）；跨行变化 → move + **slot 让位**：slot 之前行保持原位、slot 及其后行下移 34px（=被挤开），槽位即落点。
+  3) end：place_forget + 全量 relayout 归位。
+- 踩坑修复：
+  - **快照存在拖动行上，relayout 用 getattr(self=App) 取不到 → 改 getattr(skip)**（让位基准错乱）。
+  - **move 后未更新 _drag_src → 下次 move pop 错行**（_drag_src 必须实时 = target）。
+  - **落点计算原"行 i 下半 target=i+1"在 pop 后语义错 1 格**（insert 位置多 1）→ 改用无拖动行序换算。
+  - **slot=0（顶部悬停）不能让位**（全部下移=双倍空隙）→ `yy = base + (PITCH if slot>0 and j>=slot else 0)`。
+  - **拖动行中心在原位行（i==src）不敏感**（小动几像素就变位）。
+- 验证：5 行布局 [2,36,70,104,138]；start 后其他行不动；my=20 原位不动、my=65→idx1 且 r1 原位 r2/r3/r4=104/138/172（挤开）、my=133→idx3、拖回 my=45→idx1、松开归位 [2,36,70,104,138]；截图像素统计拖行淡蓝 23785（完整浮最上）、宽 943（place relwidth 撑满）。test_v2/smoke_v2 全绿。
+- 测试注意：**验证拖放必须先 app._show_page("cp")**（未显示页 canvas 宽 1，拖动行宽 1px 是未显示页的正常状态）。
+### 2026-09-27 拖放终版补丁：拖动行吸附槽位（落点即位置）
+- 用户第 5 轮反馈（附截图）：6 个文件拖动时"根本不知道会落到哪里去"——根因：拖动行跟手浮在鼠标处（盖住行），而让位出的空槽在行间间隙，两者分离，用户对不上落点。
+- 修复：_drag_motion 改为**拖动行吸附落点槽位中心**（slot_center：插行 i 前→上行间隙中心 2+i*34-2；插行 i 后→下行间隙中心 2+i*34+32；原位行→自身中心），拖动行 place y = slot_center - h/2，浮在行间空隙正中 = 落点即位置，一眼可见。
+- 验证：my=65→idx1、r0y=53（槽位中心68-15）、淡蓝23773浮最上、r1=36原位/r2=104挤开；my=133→idx3、r0y=121（槽位136-15）；松开 idx3 归位。test_v2/smoke_v2 全绿。
+- 交互总结：拎起（其他行不动）→ 拖动（行吸附行间槽位跳动、跨行实时挤开下方行）→ 松开落定。
+
+### 2026-09-28 拖拽手感评估收尾 + 旧脚本清理
+- tkinter place+槽位吸附版用户试用后仍不满意（"没有改善"）；pywebview demo 第一版（双向让位）被否（"还是补位，只是有 web 感"）→ 改**单向挤开**：拎起后其他行不动，仅插入点及其后（鼠标以下）行下移挤开，上方行永不动；拖动行吸附空槽=落点。注入 JS 模拟验证通过：拖 C 到 center250 → C translateY(136px)、E(上方)=0 不动、F(下方)=68px 挤开、松开后顺序 A,B,D,E,C,F、transform 清空（DRAG_LOGIC_OK）。
+- **用户最终判定**：向上拉体验可，向下拉仍不理想 → **暂缓迁移，先用 tkinter 版几天，后续再转 Tauri**。demo 已按用户要求删除。
+- 旧脚本清理（用户确认）：download.bat/download.py、compress.bat/compress.py、eazyvid_v1.py 均未被 eazyvid.py 引用（仅注释文字提到 compress.py），已全部删除。剩余：eazyvid.py/eazyvid.bat/run_tests.bat/test_v2.py/smoke_v2.py。
+- 待办：转 Tauri 时 UI 层整体重写（Web 拖拽交互已在 demo 验证单向挤开方案），后台 yt-dlp/ffmpeg/嗅探复用。
+
+### 2026-09-28 移除压缩队列拖拽重排（用户决定）
+- 背景：拖拽手感经 tkinter place+槽位吸附、pywebview demo 多轮打磨仍不理想，用户决定先用着、后续转 Tauri；本轮明确要求**整套去掉拖拽逻辑**。
+- 移除内容：_cv/frame 的 ButtonPress-1/B1-Motion/ButtonRelease-1 绑定；_drag_start/_drag_motion/_drag_end 三方法；_relayout_compress_rows 精简为纯顺序 place 布局（去掉 skip/slot 参数与拖动分支）。双击(_on_dbl)、右键(_on_rclick)、文件拖入(_on_drop_files) 保留。
+- 顺带修复（同批次）：_drag_end 原无条件 place_forget 摘行——压缩中行被点击后行消失但 ffmpeg 仍在跑（CPU 满）；已通过"非拖拽点击直接 return"修复，拖拽移除后此 bug 不再可能触发。
+- 验证：py_compile 通过；test_v2/smoke_v2 全绿（测试不含拖拽断言，无需改）。
+- 注意：修复需重启程序生效（当前运行实例仍为旧代码）。
+
+### 2026-09-28 图标定稿（蓝紫渐变版）
+- 用户自绘 SVG 迭代：初始红白版（白卡+红圆白三角）→ 用户察觉"像 YouTube" → 提供 V1 科技蓝/V2 青绿/V3 深蓝黑三变体 → 用户自改 SVG 定稿：中心圆蓝→深蓝→紫对角渐变(#005CE6→#7B2CBF)，右上压缩块紫、左下压缩块蓝（与圆两端呼应），白底零阴影。
+- 渲染链路：Chrome headless --default-background-color=00000000 渲染 1024 RGBA（四角透明、25.1% 透明区）→ Pillow LANCZOS 缩放出 16/24/32/48/64/128/256/512/1024 PNG + 七档 eazyVid.ico → 浅/深色预览图。全套存 ICO\ 下。
+- 应用：桌面快捷方式 lnk 指向 ICO\eazyVid.ico 自动生效；eazyvid.py _apply_window_icon 重启后生效。
+- 经验：Chrome headless 渲染 SVG 需每次新建 --user-data-dir（复用会锁导致截图失败）；Pillow ICO 保存 256 档用 PNG 压缩。
+
+### 2026-09-28 压缩行右键语义定稿 + "打开所在文件夹"换原生 API
+- 右键语义（用户定义）：结束态(done/stopped/failed)=「打开文件」(压缩输出)+「打开输出目录」；压缩中/排队=仅「打开输出目录」（输出目录，非源文件目录）。`_on_rclick` 重写（用 rec["out"] 而非退回源文件的 _final_path）。
+- "打开所在文件夹"根治：explorer 命令行（含空格/方括号路径解析失败→此电脑）弃用，改 ctypes 调 shell32 `SHParseDisplayName` + `SHOpenFolderAndSelectItems`（实测含方括号中文路径正常）。`_os_reveal` 拆分出 `_reveal_select`；文件不存在时逐级找最近父目录打开。
+- 事故与修复：恢复 TaskRow 时误删原版 CompressRow（锚点匹配到类后 def），git show HEAD 提取 [TaskRow..App) 插入导致两份 CompressRow 重复（后定义覆盖先定义）——已删 HEAD 重复块（旧 _estimate_eta/_fmt_eta/_fmt_size/CompressRow）；原版 CompressRow 缺 _sync_cv（bind Configure 时 AttributeError 被吞→行建不出来）——从 HEAD 补回。test_v2+smoke_v2 全绿。
+- 教训：按"下一个 def"切割函数/类不可靠（类内方法也匹配 \ndef），定位替换用方法边界（def _layout 等锚点）更稳。
+
+### 2026-09-28 打开输出目录修复 + 合并音轨提示
+- _os_reveal 最终形态：目录 → os.startfile 直接打开（不再走 COM/explorer，最可靠）；文件 → SHOpenFolderAndSelectItems 定位选中，异常兜底打开父目录；路径不存在 → 逐级向上找最近父目录。
+- 下载行合并提示：TaskRow.refresh 检测 downloading + total_known + dl_bytes > _total_bytes（YouTube 音视频分离场景）→ 行位置弹气泡「正在合并音轨，请稍后」（3.5s 自动消失，_merge_tip_shown 防重复只弹一次）。
+- 教训：多段 patch 脚本若中途断言失败会中断，未执行 write 导致前几段修改只改内存不落盘——先全部断言通过再统一写盘。
+
+### 2026-09-28 设置/下载细节 + 右键修复链
+- 设置页：浏览压缩输出目录后自动选中「指定目录」（_settings_pick_dir 加 mode_var，选目录即 cmode.set("custom")）。
+- 下载失败进度条：TaskRow._draw_bar 失败态填充改黄色 #E8B800（正常保持蓝）。
+- 右键修复链收尾：CompressRow 用 self.app.cqueue（不是 self.cqueue，AttributeError 被吞导致右键完全无反应）；_os_reveal 目录直接 os.startfile（"打开输出目录"不打开问题）、文件定位选中失败兜底父目录。
+- 回归：test_v2 + smoke_v2 全绿；合并气泡验证触发一次不重复。
