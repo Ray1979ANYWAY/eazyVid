@@ -18,3 +18,7 @@ eazyvid_settings.json
 eazyvid.log
 
 hls_test/
+
+downloaded/
+eazyvid.lock
+adobe_collabsync_restore.reg

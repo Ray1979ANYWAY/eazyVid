@@ -90,16 +90,16 @@ _cookie_lock = threading.Lock()
 
 _COOKIE_CACHE = {"path": None, "ts": 0.0}
 
-def cookie_args():
+def cookie_args(force=False):
     """优先 CDP 取 cookie（嗅探 Chrome 运行时，Network.getAllCookies 无文件锁问题，
     且拿到的是嗅探窗口的登录态）；兜底复制 .eazyvid_profile 副本。
     CDP 调用同步且可达 1~2 秒，缓存 120 秒：探测/嗅探的后台线程已取过，
-    下载启动（主线程）直接命中缓存，避免界面卡顿。"""
+    下载启动（主线程）直接命中缓存，避免界面卡顿。
+    force=True：跳过缓存强制重取（探测报 Fresh cookies 时的重试）。"""
     now = time.time()
-    if _COOKIE_CACHE["path"] and now - _COOKIE_CACHE["ts"] < 120:
+    if not force and _COOKIE_CACHE["path"] and now - _COOKIE_CACHE["ts"] < 120:
         return ["--cookies", _COOKIE_CACHE["path"]]
     if _SNIFFER is not None:
-        with _cookie_lock:
             try:
                 cf = _SNIFFER.cookie_file()
                 if cf:
@@ -128,11 +128,11 @@ def cookie_args():
     return []
 
 # ---------- 探测模块：yt-dlp -J ----------
-def probe_url(url, timeout=90):
+def probe_url(url, timeout=90, force_cookie=False):
     """返回 (info_dict, error)"""
     try:
         r = subprocess.run(
-            [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist"] + cookie_args() + ["-J", url],
+            [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist"] + cookie_args(force=force_cookie) + ["-J", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             creationflags=NO_WINDOW | 0x00004000)
     except subprocess.TimeoutExpired:
@@ -144,12 +144,12 @@ def probe_url(url, timeout=90):
     except Exception as e:
         return None, f"解析失败: {e}"
 
-def probe_formats_f(url, timeout=90):
+def probe_formats_f(url, timeout=90, force_cookie=False):
     """-J 探测失败的 -F 兜底：解析 yt-dlp 格式表（与命令行脚本一致）。
     返回 (formats, error)；formats 结构与 extract_formats 兼容。"""
     try:
         r = subprocess.run(
-            [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist"] + cookie_args() + ["-F", url],
+            [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist"] + cookie_args(force=force_cookie) + ["-F", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             creationflags=NO_WINDOW | 0x00004000)
     except subprocess.TimeoutExpired:
@@ -273,18 +273,32 @@ def is_video_request(url, headers):
     # YouTube 无扩展名流（googlevideo/videoplayback）特征兜底
     if "googlevideo.com" in url or "/videoplayback" in url:
         return True
-    ct = (headers.get("content-type") or "").lower()
+    ct = (headers.get("content-type") or headers.get("Content-Type") or "").lower()
     if ct.startswith("video/") or ct in ("application/vnd.apple.mpegurl", "application/x-mpegurl",
                                          "application/dash+xml", "application/vnd.ms-sstr+xml"):
         return True
     if "octet-stream" in ct and re.search(r"\.(mp4|webm|flv)(\?|$)", url):
         return True
-    return bool(re.search(r"\.(m3u8|mp4|webm|flv|mov|m4s|mpd|f4m)(\?|$)", url))
+    if re.search(r"\.(m3u8|mp4|webm|flv|mov|m4s|mpd|f4m)(\?|$)", url.lower()):
+        return True
+    # 媒体 CDN 域名兜底：无扩展名视频流（如 vd755.okcdn.ru/?expires=... 这类裸签名 URL）
+    # 覆盖 video/media/stream/player 域名与 vd* 编号域名；排除明显静态资源路径
+    try:
+        from urllib.parse import urlparse
+        netloc = (urlparse(url).netloc or "").lower()
+    except Exception:
+        netloc = ""
+    if netloc and re.search(r"(^vd\d*\.|(^|\.)video\.|(^|\.)media\.|(^|\.)stream\.|(^|\.)player\.)", netloc):
+        base = url.lower().split("?", 1)[0]
+        if not re.search(r"\.(js|css|png|jpe?g|gif|svg|webp|woff2?|ico|json|html)(\?|$)", base):
+            return True
+    return False
 
 class Sniffer:
     """CDP 嗅探：启动调试浏览器 → 监听 Network → 识别视频流。
     event_cb(kind, payload): kind in ("captured", url) / ("timeout", None)"""
-    def __init__(self, log_cb, event_cb=None):
+    def __init__(self, log_cb, event_cb=None, root=None):
+        self.root = root
         self.log_cb = log_cb
         self.event_cb = event_cb
         self.proc = None
@@ -312,7 +326,16 @@ class Sniffer:
                "--disable-extensions",
                "--disable-sync",
                "--disable-features=ExtensionsToolbarMenu,Translate,ReadingList,BookmarkBar",
-               f"--app={url or 'about:blank'}"]
+               "--app=about:blank"]
+        if self.root is not None:
+            try:
+                rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
+                rw = self.root.winfo_width(); rh = self.root.winfo_height()
+                wx = rx + (rw - 960) // 2
+                wy = ry + (rh - 720) // 2
+                cmd.append(f"--window-position={wx},{wy}")
+            except Exception:
+                pass
         try:
             self.proc = subprocess.Popen(cmd, creationflags=0x00004000)  # BELOW_NORMAL：嗅探 Chrome 不抢界面
         except OSError as e:
@@ -345,7 +368,8 @@ class Sniffer:
             return None
 
     def _run(self):
-        ws_url = None
+        import websocket
+        tabs = []
         for _ in range(40):
             if not self.running:
                 return
@@ -353,103 +377,187 @@ class Sniffer:
                 req = urllib.request.Request(f"http://127.0.0.1:{CHROME_PORT}/json")
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     tabs = json.loads(resp.read().decode("utf-8", "replace"))
-                target = None
-                for t in tabs:
-                    if t.get("type") != "page":
-                        continue
-                    u = t.get("url", "")
-                    if self.start_url and self.start_url != "about:blank" and u.startswith(self.start_url):
-                        target = t
-                        break
-                if target is None and (not self.start_url or self.start_url == "about:blank"):
-                    for t in tabs:
-                        if t.get("type") == "page":
-                            target = t
-                            break
-                if target and target.get("webSocketDebuggerUrl"):
-                    ws_url = target["webSocketDebuggerUrl"]
+                if any(t.get("type") in ("page", "iframe") for t in tabs):
                     break
             except Exception:
                 pass
             time.sleep(0.5)
-        if not ws_url:
+        pages = [t for t in tabs if t.get("type") in ("page", "iframe")]
+        if not pages:
             self.log_cb("嗅探：未能连接浏览器调试端口")
             return
-        try:
-            import websocket
-            self.ws = websocket.create_connection(ws_url, timeout=15)
-            self.ws.send(json.dumps({"id": 1, "method": "Network.enable"}))
-            self.ws.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
-            self.log_cb("嗅探：已连接，请在播放窗口打开/刷新视频页并点击播放")
-            # 自动刷新一次：部分播放器加载过快（流请求早于嗅探连接），刷新可重新触发
-            time.sleep(1.5)
-            try:
-                self.ws.send(json.dumps({"id": 3, "method": "Page.reload"}))
-                self.log_cb("嗅探：已自动刷新播放页（重新触发视频流请求）")
-            except Exception:
-                pass
-            while self.running:
-                try:
-                    msg = json.loads(self.ws.recv())
-                except Exception:
-                    if self.running:
-                        continue
+        main = None
+        for t in pages:
+            if t.get("type") != "page":
+                continue
+            u = t.get("url", "")
+            if self.start_url and self.start_url != "about:blank" and u.startswith(self.start_url):
+                main = t
+                break
+        if main is None:
+            for t in pages:
+                if t.get("type") == "page":
+                    main = t
                     break
-                if msg.get("id") == 900:
-                    if self._cookie_wait:
-                        ev, _ = self._cookie_wait
-                        self._cookie_wait = (ev, msg.get("result", {}))
-                        ev.set()
+        if main is None and pages:
+            main = pages[0]
+        self.log_cb(f"嗅探：发现 {len(pages)} 个页面/浮层（主：{main.get('url','')[:70]}）")
+        self.wss = []
+        self._conn_urls = set()
+        try:
+            for t in pages:
+                wu = t.get("webSocketDebuggerUrl")
+                if not wu:
                     continue
-                method = msg.get("method", "")
-                params = msg.get("params", {})
-                if method == "Runtime.consoleAPICalled":
+                try:
+                    ws = websocket.create_connection(wu, timeout=15)
+                    ws.settimeout(0.3)
+                    ws.send(json.dumps({"id": 1, "method": "Network.enable"}))
+                    ws.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
+                    self.wss.append(ws)
+                    self._conn_urls.add(wu)
+                except Exception:
+                    pass
+            if not self.wss:
+                self.log_cb("嗅探：所有页面连接失败")
+                return
+            self.ws = self.wss[0]
+            self.log_cb("嗅探：已连接，正在加载播放页…")
+            # 嗅探就绪后再导航：确保页面加载时的所有媒体请求（含自动播放）都在监听内
+            if self.start_url and self.start_url != "about:blank":
+                try:
+                    self.wss[0].send(json.dumps({"id": 3, "method": "Page.navigate",
+                                                 "params": {"url": self.start_url}}))
+                    self.log_cb(f"嗅探：已加载播放页 {self.start_url[:80]}，请播放（需要登录的网站请先登录）")
+                except Exception:
+                    self.log_cb("嗅探：导航失败，请手动打开视频页并点击播放")
+            self._last_tab_refresh = 0
+            while self.running:
+                # 播放状态轮询（诊断）：每 3 秒检查 video 是否在播
+                if time.time() - getattr(self, "_vts", 0) > 3:
+                    self._vts = time.time()
+                    for _ws in self.wss:
+                        try:
+                            _ws.send(json.dumps({"id": 901, "method": "Runtime.evaluate",
+                                                 "params": {"expression": "var v=document.querySelector('video'); v?JSON.stringify({t:Math.round(v.currentTime),r:v.readyState}):'nov'", "returnByValue": True}}))
+                        except Exception:
+                            pass
+                # 每 5 秒刷新 target 列表，自动补连新开的页面（登录弹窗/新窗口）
+                if time.time() - self._last_tab_refresh > 5:
+                    self._last_tab_refresh = time.time()
+                    self._refresh_targets()
+                for ws in self.wss:
                     try:
-                        args_ = params.get("args", [])
-                        text = " ".join((a.get("value") if isinstance(a.get("value"), str) else str(a.get("value", ""))) for a in args_)
-                        if text:
-                            self.log_cb("嗅探JS: " + text)
+                        msg = json.loads(ws.recv())
                     except Exception:
-                        pass
-                    continue
-                url = None
-                headers = {}
-                if method == "Network.requestWillBeSent":
-                    req_ = params.get("request", {})
-                    url = req_.get("url")
-                    headers = req_.get("headers", {})
-                elif method == "Network.responseReceived":
-                    resp = params.get("response", {})
-                    url = resp.get("url")
-                    headers = resp.get("headers", {})
-                if url and is_video_request(url, headers):
-                    if url in self.seen:
                         continue
-                    vp = self._vid_path(url)
-                    if self._base_path is None:
-                        self._base_path = vp
-                    elif vp and vp != self._base_path:
-                        # m3u8/mpd 清单豁免：主视频 HLS/DASH 常与广告/预览流不同路径，不忽略
-                        if not re.search(r'\.(m3u8|mpd)(\?|$)', url):
-                            self.log_cb(f"嗅探：检测到页面跳转/推荐视频流（与当前视频不同），已忽略：{url}")
+                    if msg.get("id") == 901:
+                        try:
+                            val = (msg.get("result") or {}).get("result") or {}
+                            val = val.get("value")
+                            if val and val != "nov" and str(val).startswith("{"):
+                                d = json.loads(val)
+                                t = d.get("t") or 0
+                                if t > 0:
+                                    self.log_cb(f"嗅探VIDEO: 播放中 t={t}s")
+                        except Exception:
+                            pass
+                        continue
+                    if msg.get("id") == 900:
+                        if self._cookie_wait:
+                            ev, _ = self._cookie_wait
+                            self._cookie_wait = (ev, msg.get("result", {}))
+                            ev.set()
+                        continue
+                    method = msg.get("method", "")
+                    params = msg.get("params", {})
+                    if method.startswith("Network.webSocket"):
+                        try:
+                            u = params.get("url", "") or params.get("request", {}).get("url", "") or ""
+                            self.log_cb("嗅探WS: " + method.split(".")[1] + " " + str(u)[:80])
+                        except Exception:
+                            pass
+                        continue
+                    if method == "Runtime.consoleAPICalled":
+                        try:
+                            args_ = params.get("args", [])
+                            text = " ".join((a.get("value") if isinstance(a.get("value"), str) else str(a.get("value", ""))) for a in args_)
+                            if text:
+                                self.log_cb("嗅探JS: " + text)
+                        except Exception:
+                            pass
+                        continue
+                    url = None
+                    headers = {}
+                    if method == "Network.requestWillBeSent":
+                        req_ = params.get("request", {})
+                        url = req_.get("url")
+                        headers = req_.get("headers", {})
+                    elif method == "Network.responseReceived":
+                        resp = params.get("response", {})
+                        url = resp.get("url")
+                        headers = resp.get("headers", {})
+                    # 调试日志（临时）：打印所有请求，定位 OK.ru 视频流真实路径
+                    if url:
+                        try:
+                            ct_s = headers.get("content-type") or "?"
+                            self.log_cb("嗅探DBG: " + method.split(".")[1] + " video=" + str(is_video_request(url, headers))
+                                        + " ct=" + str(ct_s)[:25] + " " + url[:120])
+                        except Exception:
+                            pass
+                    if url and is_video_request(url, headers):
+                        if url in self.seen:
                             continue
-                    self.seen.add(url)
-                    self._captured = True
-                    self.log_cb("嗅探：捕获 " + url)
-                    if self.event_cb:
-                        self.event_cb("captured", url)
-                    if not self._auto_clicked:
-                        self._auto_clicked = True
-                        threading.Thread(target=self._auto_quality, daemon=True).start()
+                        vp = self._vid_path(url)
+                        if self._base_path is None:
+                            self._base_path = vp
+                        elif vp and vp != self._base_path:
+                            # m3u8/mpd 清单豁免：主视频 HLS/DASH 常与广告/预览流不同路径，不忽略
+                            if not re.search(r'\.(m3u8|mpd)(\?|$)', url):
+                                self.log_cb(f"嗅探：检测到页面跳转/推荐视频流（与当前视频不同），已忽略：{url}")
+                                continue
+                        self.seen.add(url)
+                        self._captured = True
+                        self.log_cb("嗅探：捕获 " + url)
+                        if self.event_cb:
+                            self.event_cb("captured", url)
+                        if not self._auto_clicked:
+                            self._auto_clicked = True
+                            threading.Thread(target=self._auto_quality, daemon=True).start()
         except Exception as e:
             self.log_cb(f"嗅探：连接中断 {e}")
         finally:
-            if self.ws:
+            for ws in getattr(self, "wss", []):
                 try:
-                    self.ws.close()
+                    ws.close()
                 except Exception:
                     pass
 
+    def _refresh_targets(self):
+        """每 5 秒刷新 page target 列表，自动补连新开的页面（登录弹窗/新窗口/OOPIF）。"""
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{CHROME_PORT}/json")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                tabs = json.loads(resp.read().decode("utf-8", "replace"))
+            import websocket
+            for t in tabs:
+                if t.get("type") not in ("page", "iframe"):
+                    continue
+                wu = t.get("webSocketDebuggerUrl")
+                if not wu or wu in getattr(self, "_conn_urls", set()):
+                    continue
+                try:
+                    ws = websocket.create_connection(wu, timeout=10)
+                    ws.settimeout(0.3)
+                    ws.send(json.dumps({"id": 1, "method": "Network.enable"}))
+                    ws.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
+                    self.wss.append(ws)
+                    self._conn_urls.add(wu)
+                    self.log_cb(f"嗅探：已补连新页面 {t.get('url','')[:70]}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
     def _auto_quality(self):
         """通用清晰度遍历（不依赖站点结构）：
         状态机 —— 0 找档位直显 / 找设置·清晰度按钮打开菜单 → 1 菜单开（找 Quality 子菜单或档位）→ 2 逐个点档位。
@@ -701,6 +809,37 @@ def build_dl_cmd(url, fmt_arg, out_dir, task_id, use_cookie=False, referer=None)
     cmd.append(url)
     return cmd, tmpdir
 
+def _fmt_sz(n):
+    """字节 → 紧凑单位：81M / 1.2G / 803K"""
+    try:
+        n = max(0, int(n))
+    except Exception:
+        return "?"
+    if n >= 1073741824:
+        return f"{n / 1073741824:.1f}G"
+    if n >= 1048576:
+        return f"{int(round(n / 1048576))}M"
+    if n >= 1024:
+        return f"{int(round(n / 1024))}K"
+    return f"{n}B"
+
+def _fmt_speed(s):
+    """yt-dlp 速度串（如 3.21MiB/s）→ 紧凑格式（如 803K/S、1.9M/S）"""
+    if not s:
+        return ""
+    m = re.match(r"([\d.]+)(MiB|GiB|KiB|B)/s", s.strip())
+    if not m:
+        return ""
+    v = float(m.group(1)) * {"B": 1, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824}[m.group(2)]
+    if v >= 1073741824:
+        return f"{v / 1073741824:.1f}G/S"
+    if v >= 1048576:
+        x = v / 1048576
+        return f"{x:.1f}M/S" if x < 10 else f"{int(round(x))}M/S"
+    if v >= 1024:
+        return f"{int(round(v / 1024))}K/S"
+    return f"{int(v)}B/S"
+
 def _kill_proc_tree(proc):
     """Windows 杀整个进程树：yt-dlp.exe 是 pyinstaller onefile 双进程架构
     （bootloader 父进程 + 实际下载子进程），terminate 只杀父进程会让子进程
@@ -737,6 +876,7 @@ class DownloadTask:
         self.state = "waiting"
         self.progress = 0.0
         self.size_str = ""
+        self.speed = ""   # 下载速度（yt-dlp at X/s）
         self.total_known = bool(size)
         self.dl_bytes = 0
         self._total_bytes = int(size) if size else 0
@@ -746,6 +886,8 @@ class DownloadTask:
         self.ui = None   # 任务行组件
 
     def start(self):
+        if self.proc is not None and self.proc.poll() is None:
+            return   # 防重入：已有下载进程在跑，避免同任务双进程（进度互相覆盖、重复下载）
         cmd, self.tmpdir = build_dl_cmd(self.url, self.fmt_arg, self.out_dir, self.task_id,
                                          self.use_cookie, self.referer)
         self.state = "downloading"
@@ -848,10 +990,14 @@ class DownloadTask:
         threading.Thread(target=poll_part, daemon=True).start()
         for line in self.proc.stdout:
             line = line.strip()
-            m = re.search(r"\[download\]\s+([\d.]+)% of ~?([\d.]+(?:MiB|GiB|KiB))", line)
+            m = re.search(r"\[download\]\s+([\d.]+)%\s+of\s+~?\s?([\d.]+(?:MiB|GiB|KiB))\s+at\s+([\d.]+(?:MiB|GiB|KiB|B)/s)", line)
             if m:
-                self.progress = float(m.group(1))
+                # 多流下载（视频+音频分离）时进度行会从 10% 重新走一遍：只涨不跌，避免进度反复/误认为重复下载
+                pct = float(m.group(1))
+                if pct > self.progress:
+                    self.progress = pct
                 self.size_str = m.group(2)
+                self.speed = m.group(3)
                 mm = re.match(r"([\d.]+)(MiB|GiB|KiB)", m.group(2))
                 if mm:
                     self._total_bytes = int(float(mm.group(1)) * _unit[mm.group(2)])
@@ -926,6 +1072,7 @@ class DownloadTask:
 class DownloadPool:
     def __init__(self, on_update, log_cb, max_concurrent=MAX_CONCURRENT):
         self.sem = threading.Semaphore(max_concurrent)
+        self.out_dir = None      # 压缩输出目录（None=与源文件同目录；设置页可改）
         self.tasks = []
         self.task_seq = 0
         self.on_update = on_update
@@ -987,69 +1134,386 @@ def get_duration(path):
     except Exception:
         return None
 
-def compress_video(in_path, mode_name, log_cb):
-    out_path = os.path.splitext(in_path)[0] + "_压缩.mp4"
-    mode = COMPRESS_MODES[mode_name]
-    if mode["codec"] == "hevc_nvenc":
-        vargs = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
-                 "-rc", "vbr", "-b:v", "2500k", "-maxrate", "3250k",
-                 "-bufsize", "5000k", "-cq", "27", "-spatial-aq", "1"]
-    else:
-        vargs = ["-c:v", mode["codec"]] + list(mode["params"])
-    cmd = [FFMPEG, "-hide_banner", "-y", "-i", in_path,
-           "-map", "0:v:0", "-map", "0:a?", *vargs, "-c:a", "copy",
-           "-progress", "pipe:1", "-movflags", "+faststart", out_path]
-    total = get_duration(in_path)
-    log_cb(f"压缩：{os.path.basename(in_path)} → {os.path.basename(out_path)}（{mode_name}）")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace",
-                            creationflags=NO_WINDOW | 0x00004000)  # BELOW_NORMAL：压缩不抢界面
-    t0 = time.time()
-    for raw in proc.stdout:
-        line = raw.strip()
-        if line.startswith("out_time_us="):
+def _probe_duration(path, log_cb=None):
+    """ffmpeg -i 解析视频时长（秒）；失败返回 None"""
+    try:
+        ff = os.path.join(SCRIPT_DIR, "ffmpeg.exe")
+        if not os.path.exists(ff):
+            ff = "ffmpeg"
+        r = subprocess.run([ff, "-i", path], capture_output=True, text=True,
+                           timeout=10, errors="replace",
+                           creationflags=NO_WINDOW | 0x00004000)
+        mm = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
+        if mm:
+            h, mi, s = int(mm.group(1)), int(mm.group(2)), float(mm.group(3))
+            return h * 3600 + mi * 60 + s
+    except Exception:
+        pass
+    return None
+
+def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, proc_holder=None):
+    """压缩单个视频；返回 (是否成功, 输出路径)。mode_name 必须是 COMPRESS_MODES 的键。
+    与 compress.py 对齐：分辨率不变、低码率音频原样复制、10bit 适配、NVENC 失败自动降级软件 x265。"""
+    try:
+        m = COMPRESS_MODES.get(mode_name) or next(iter(COMPRESS_MODES.values()))
+        if out_dir:
             try:
-                cur = int(line.split("=", 1)[1]) / 1e6
-            except ValueError:
-                continue
-            if total:
-                log_cb(f"压缩进度：{min(cur/total*100, 100):.1f}% ({fmt_time(cur)}/{fmt_time(total)})")
-    proc.wait()
-    if proc.returncode != 0:
-        log_cb("压缩失败")
+                os.makedirs(out_dir, exist_ok=True)
+            except OSError:
+                pass
+            out_path = os.path.join(out_dir, os.path.basename(os.path.splitext(in_path)[0]) + "_压缩.mp4")
+        else:
+            out_path = os.path.splitext(in_path)[0] + "_压缩.mp4"
+        ff = os.path.join(SCRIPT_DIR, "ffmpeg.exe")
+        if not os.path.exists(ff):
+            ff = "ffmpeg"
+        fp = os.path.join(SCRIPT_DIR, "ffprobe.exe")
+        if not os.path.exists(fp):
+            fp = "ffprobe"
+
+        # 一次 ffprobe：时长 / 视频 pix_fmt / 音频编码与码率
+        duration = None
+        pix_fmt = ""
+        v_br = 0          # 源视频码率（bps），用于压缩前预检
+        a_codec, a_br = "", 0
+        try:
+            r = subprocess.run([fp, "-hide_banner", "-v", "error",
+                                "-show_entries", "stream=codec_type,codec_name,pix_fmt,bit_rate",
+                                "-show_entries", "format=duration",
+                                "-of", "json", in_path],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=15, creationflags=NO_WINDOW | 0x00004000)
+            if r.returncode == 0:
+                info = json.loads(r.stdout)
+                try:
+                    duration = float(info["format"].get("duration") or 0) or None
+                except (TypeError, ValueError):
+                    duration = None
+                try:
+                    v_br = int(info["format"].get("bit_rate") or 0)
+                except (TypeError, ValueError):
+                    v_br = 0
+                for s in info.get("streams", []):
+                    if s.get("codec_type") == "video":
+                        if not pix_fmt:
+                            pix_fmt = s.get("pix_fmt", "") or ""
+                        try:
+                            sv = int(s.get("bit_rate") or 0)
+                        except (TypeError, ValueError):
+                            sv = 0
+                        v_br = max(v_br, sv)
+                    elif s.get("codec_type") == "audio":
+                        a_codec = s.get("codec_name", "") or ""
+                        try:
+                            a_br = int(s.get("bit_rate") or 0)
+                        except (TypeError, ValueError):
+                            a_br = 0
+        except Exception:
+            pass
+        if duration is None:
+            duration = _probe_duration(in_path, log_cb)
+
+        def _run(vargs):
+            cmd = [ff, "-hide_banner", "-y", "-i", in_path,
+                   "-map", "0:v:0", "-map", "0:a?"] + list(vargs)
+            if a_codec in ("aac", "mp3", "ac3", "eac3") and 0 < a_br <= 192000:
+                cmd += ["-c:a", "copy"]            # 低码率音频原样复制，零损失
+            else:
+                cmd += ["-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-progress", "pipe:1", "-movflags", "+faststart", out_path]
+            # 必须用二进制 + bufsize=0 + readline：text 模式会缓冲整段进度输出，
+            # 导致进度回调全部积压到进程结束才触发（表现为"1% 卡很久，突然完成"）
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    bufsize=0,
+                                    creationflags=NO_WINDOW | 0x00004000)
+            if proc_holder is not None:
+                proc_holder["proc"] = proc
+            for raw in iter(proc.stdout.readline, b""):
+                line = raw.decode("utf-8", "replace").strip()
+                if line.startswith("out_time_us="):
+                    try:
+                        us = float(line.split("=", 1)[1])
+                        if duration and progress_cb:
+                            progress_cb(min(1.0, us / (duration * 1000000.0)))
+                    except (ValueError, ZeroDivisionError):
+                        pass
+            proc.wait()
+            return proc.returncode
+
+        # 压缩前预检：源码率已很低（≈VP9/AV1 高度压缩，CRF 重压必然更大）→ 直接跳过，不浪费编码时间
+        if v_br and v_br <= 2000 * 1000:
+            log_cb(f"源码率仅 {v_br // 1000}kbps（已高度压缩），压缩预计无法减小体积，跳过并保留原文件")
+            return True, None
+        vargs = ["-c:v", m["codec"]] + list(m.get("params", []))
+        # NVENC：按源视频码率的 50% 设目标码率，保证有实际压缩效果
+        if m["codec"] == "hevc_nvenc":
+            src_br = 0
+            try:
+                r = subprocess.run([ff, "-i", in_path], capture_output=True, text=True,
+                                   timeout=10, errors="replace",
+                                   creationflags=NO_WINDOW | 0x00004000)
+                mm = re.search(r"bitrate:\s*(\d+)\s*kb/s", r.stderr or "")
+                if mm:
+                    src_br = int(mm.group(1)) * 1000
+            except Exception:
+                pass
+            target = max(int(src_br * 0.5 / 1000), 600) if src_br > 0 else 2500
+            vargs = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
+                     "-rc", "vbr", "-b:v", f"{target}k",
+                     "-maxrate", f"{int(target * 1.3)}k", "-bufsize", f"{int(target * 2)}k",
+                     "-cq", "27", "-spatial-aq", "1"]
+        # 10bit 色深：软件 x265 按 10bit 编码；NVENC 不支持则自动改软件 x265
+        if any(x in pix_fmt for x in ("10le", "12le", "p010", "p012")):
+            if m["codec"] == "libx265":
+                vargs += ["-pix_fmt", "yuv420p10le"]
+            else:
+                log_cb("检测到 10bit 源视频，NVENC 不支持，自动改用软件 x265")
+                vargs = ["-c:v", "libx265", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p10le"]
+        log_cb(f"开始压缩：{os.path.basename(in_path)} → {os.path.basename(out_path)}（{mode_name}）")
+        rc = _run(vargs)
+        # 硬件编码失败时自动降级为软件 x265 重试
+        if rc != 0 and m["codec"] == "hevc_nvenc":
+            log_cb("硬件编码失败，自动改用软件 x265 重试...")
+            vargs = ["-c:v", "libx265", "-crf", "24", "-preset", "medium"]
+            rc = _run(vargs)
+        if rc != 0 or not os.path.exists(out_path):
+            log_cb(f"压缩失败（返回码 {rc}）")
+            return False, None
+        in_sz = os.path.getsize(in_path)
+        out_sz = os.path.getsize(out_path)
+        if out_sz > in_sz:
+            # 压后反而更大（如 VP9/AV1 低码率源）：放弃输出，保留原文件，标记"已跳过"
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+            log_cb(f"压缩结果比原文件更大（{_fmt_size(in_sz)}→{_fmt_size(out_sz)}），"
+                   f"该视频已高度压缩，放弃输出并保留原文件")
+            return True, None
+        log_cb(f"压缩完成：{out_path}（{_fmt_size(in_sz)}→{_fmt_size(out_sz)}）")
+        return True, out_path
+    except Exception as e:
+        log_cb(f"压缩异常：{e}")
         return False, None
-    log_cb(f"压缩完成，耗时 {fmt_time(time.time()-t0)}")
-    return True, out_path
+def _safe_compress_video(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
+    """压缩包装：任何异常都不让 worker 线程崩溃，返回 (False, None)"""
+    try:
+        return compress_video(path, mode, log, progress_cb, out_dir, proc_holder)
+    except Exception as e:
+        try:
+            log(f"压缩异常：{e}")
+        except Exception:
+            pass
+        return False, None
+
+
 
 class CompressQueue:
-    def __init__(self, log_cb, on_event=None):
-        self.q = queue.Queue()
+    def __init__(self, log_cb, on_event=None, max_workers=1):
         self.log = log_cb
         self.on_event = on_event
         self.busy = False
-        threading.Thread(target=self._worker, daemon=True).start()
+        self.out_dir = None      # 压缩输出目录（None=与源文件同目录；设置页可改）
+        self.tasks = []          # 压缩任务记录（压缩页展示；列表顺序即压缩优先级）
+        self._seq = 0
+        self.paused = True       # 手动开始：add 只排队，点「开始压缩」才启动 worker
+        self.max_workers = max(1, int(max_workers or 1))
+        self._lock = threading.Lock()
+        self._workers = []
+        self._start_workers()
 
-    def add(self, path, mode, ui_ref=None):
-        self.q.put((path, mode, ui_ref))
+    def _start_workers(self):
+        """确保 max_workers 个 worker 线程在跑"""
+        for _ in range(self.max_workers - len(self._workers)):
+            t = threading.Thread(target=self._worker, daemon=True)
+            t.start()
+            self._workers.append(t)
+
+    def start(self):
+        """开始压缩：已停止的任务恢复为排队（从头重压），唤醒 worker 处理排队任务"""
+        revived = []
+        with self._lock:
+            for t in self.tasks:
+                if t["state"] == "stopped":
+                    t["state"] = "queued"
+                    t["progress"] = 0.0
+                    t["out"] = None
+                    t["ok"] = False
+                    revived.append(t)
+        for t in revived:
+            if self.on_event:
+                self.on_event(("cqueued", t))
+        self.paused = False
+        self._start_workers()
+    def add(self, path, mode, ui_ref=None, autostart=False):
+        self._seq += 1
+        rec = {"id": self._seq, "path": path, "mode": mode, "ui_ref": ui_ref,
+               "state": "queued", "progress": 0.0, "eta": None, "out": None, "ok": False,
+               "row": None, "skip": False, "autostart": autostart}
+        with self._lock:
+            self.tasks.append(rec)
         if self.on_event:
-            self.on_event(("queued", None))
+            self.on_event(("cqueued", rec))
+        if autostart:
+            # 下载面板来的任务：只要有空闲压缩线程（正在压的 < 并发上限）就立即开始
+            with self._lock:
+                running = sum(1 for t in self.tasks if t["state"] == "compressing")
+            if running < self.max_workers:
+                self.start()
+            self.on_event(("cqueued", rec))
+
+    def remove(self, rec):
+        """删除排队/完成/失败的任务；压缩中的返回 False"""
+        with self._lock:
+            if rec.get("state") in ("queued", "done", "failed", "stopped", "skipped"):
+                rec["skip"] = True
+                try:
+                    self.tasks.remove(rec)
+                except ValueError:
+                    pass
+                return True
+        return False
+
+    def move(self, from_idx, to_idx):
+        """拖动调整优先级（未压缩行）"""
+        with self._lock:
+            if 0 <= from_idx < len(self.tasks) and 0 <= to_idx < len(self.tasks):
+                r = self.tasks.pop(from_idx)
+                self.tasks.insert(to_idx, r)
+                return True
+        return False
+
+    def stop(self, rec):
+        """停止压缩中的任务：标记 stopped（worker 不会覆盖成 failed）、杀 ffmpeg 进程树、删除不完整输出。"""
+        if rec.get("state") != "compressing":
+            return False
+        rec["state"] = "stopped"
+        ph = rec.get("_ph") or {}
+        p = ph.get("proc")
+        if p is not None:
+            _kill_proc_tree(p)
+        # 删除可能已生成的不完整输出（taskkill 后文件可能短暂锁定，重试几次）
+        cands = set()
+        try:
+            d = self.out_dir or os.path.dirname(rec["path"]) or "."
+            stem = os.path.splitext(os.path.basename(rec["path"]))[0]
+            cands.add(os.path.join(d, f"{stem}_压缩.mp4"))
+        except Exception:
+            pass
+        out = rec.get("out")
+        if out:
+            cands.add(out)
+        for c in cands:
+            for _ in range(3):
+                try:
+                    if os.path.exists(c):
+                        os.remove(c)
+                    break
+                except Exception:
+                    time.sleep(0.2)
+        return True
 
     def _worker(self):
         while True:
-            path, mode, ui_ref = self.q.get()
+            if self.paused:
+                time.sleep(0.3)
+                continue
+            with self._lock:
+                active = sum(1 for t in self.tasks if t["state"] == "compressing")
+                rec = None
+                if active < self.max_workers:
+                    rec = next((t for t in self.tasks
+                                if t["state"] == "queued" and not t.get("skip")), None)
+                    if rec is not None:
+                        rec["state"] = "compressing"
+                        rec["progress"] = 0.0
+            if rec is None:
+                time.sleep(0.3)
+                continue
+            if rec is None:
+                time.sleep(0.3)
+                continue
             self.busy = True
-            if ui_ref:
-                ui_ref.show_compress(0.0)
-            ok, out = compress_video(path, mode, self.log)
-            self.busy = False
-            if ui_ref:
-                ui_ref.show_compress(None)
+            if rec.get("ui_ref"):
+                try:
+                    rec["ui_ref"].show_compress(0.0)
+                except Exception:
+                    pass
             if self.on_event:
-                self.on_event(("compressed", (path, out, ok)))
+                self.on_event(("cstarted", rec))
 
+            def prog(p):
+                # compress_video 回调 0~1 → 统一存 0~100（UI 按 0~100 渲染百分比与底色宽度）
+                now = time.monotonic()
+                cur = min(100.0, p * 100.0)
+                prog._samples.append((now, cur))
+                rec["progress"] = cur
+                rec["eta"] = _estimate_eta(prog._samples, now, cur)
+                if self.on_event:
+                    self.on_event(("cprogress", rec))
+            prog._samples = []
+
+            rec["_ph"] = {}
+            ok, out = _safe_compress_video(rec["path"], rec["mode"], self.log, prog, self.out_dir, rec["_ph"])
+            if rec.get("state") != "stopped":
+                if ok and out:
+                    rec["state"] = "done"
+                elif ok:      # (True, None) = 压缩无收益，已放弃输出
+                    rec["state"] = "skipped"
+                else:
+                    rec["state"] = "failed"
+            rec["ok"] = ok
+            if rec.get("ui_ref"):
+                try:
+                    rec["ui_ref"].show_compress(None)
+                except Exception:
+                    pass
+            if self.on_event:
+                self.on_event(("cdone", rec))
 # ---------- GUI ----------
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+
+_URL_RE = r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+,;=%]+"
+
+def _extract_url(text):
+    """从混杂文本（分享文案+表情+链接）中提取 URL。
+    优先处理 Markdown 链接 [标题](url) → 取 ]( 后的真实目标；否则取第一个 http(s) 链接。"""
+    if not text:
+        return ""
+    m = re.search(r"\]\(" + _URL_RE, text)
+    if m:
+        return m.group(0)[2:].rstrip(")]")
+    m = re.search(_URL_RE, text)
+    return m.group(0).rstrip(")]") if m else ""
+def _os_open(path):
+    """用系统默认程序打开文件（跨平台）"""
+    try:
+        if os.name == "nt":
+            os.startfile(path)
+        else:
+            subprocess.run(["open", path])
+    except Exception:
+        pass
+
+
+def _os_reveal(path):
+    """打开文件所在文件夹（尽量选中文件；文件不存在则打开目录）"""
+    d = os.path.dirname(path) or "."
+    try:
+        if os.name == "nt":
+            if os.path.exists(path):
+                subprocess.run(["explorer", "/select,", path])
+            else:
+                os.startfile(d)
+        else:
+            if os.path.exists(path):
+                subprocess.run(["open", "-R", path])
+            else:
+                subprocess.run(["open", d])
+    except Exception:
+        pass
+
 
 class TaskRow:
     """下载池中的一行任务"""
@@ -1060,25 +1524,65 @@ class TaskRow:
         self.frame.pack(fill="x", padx=4, pady=2)
         self.name = ttk.Label(self.frame, text=task.title, width=38, anchor="w")
         self.name.pack(side="left")
-        self.bar = ttk.Progressbar(self.frame, length=130, maximum=100)
+        self.name.bind("<Double-1>", self._on_name_double)
+        self.name.bind("<Button-3>", self._on_name_right)
+        self.bar = tk.Canvas(self.frame, width=130, height=18, highlightthickness=0)
         self.bar.pack(side="left", padx=4)
-        self.pct = ttk.Label(self.frame, text="0%", width=14)
+        self.pct = ttk.Label(self.frame, text="0%", width=11)
         self.pct.pack(side="left")
         self.state_lbl = ttk.Label(self.frame, text="排队", width=12)
-        self.state_lbl.pack(side="left")
+        self.speed_lbl = ttk.Label(self.frame, text="", width=9, anchor="center")
         self.pause_btn = ttk.Button(self.frame, text="暂停", width=5, command=self._on_pause)
-        self.pause_btn.pack(side="left", padx=2)
         self.resume_btn = ttk.Button(self.frame, text="继续", width=5, command=self._on_resume)
-        self.resume_btn.pack(side="left", padx=2)
         self.resume_btn.config(state="disabled")
         self.mode_cb = ttk.Combobox(self.frame, state="readonly", width=15,
                                     values=["不压缩"] + list(COMPRESS_MODES.keys()))
         self.mode_cb.current(0 if not task.mode else list(COMPRESS_MODES.keys()).index(task.mode) + 1)
-        self.mode_cb.pack(side="left", padx=2)
         self.mode_cb.bind("<<ComboboxSelected>>", self._on_mode)
         self._bar_mode = "determinate"
         self.del_btn = ttk.Button(self.frame, text="删除", width=5, command=self._on_delete)
-        self.del_btn.pack(side="left", padx=2)
+        # 右侧组从右往左 pack（先 pack 的最靠右）→ 状态+速度+按钮+模式+删除整体右对齐、随面板拉伸自适应、不叠加
+        self.del_btn.pack(side="right", padx=2)
+        self.mode_cb.pack(side="right", padx=2)
+        self.resume_btn.pack(side="right", padx=2)
+        self.pause_btn.pack(side="right", padx=2)
+        self.speed_lbl.pack(side="right")
+        self.state_lbl.pack(side="right")
+
+    def _name_path(self):
+        return os.path.join(self.task.out_dir, self.task.title)
+
+    def _on_name_double(self, _e):
+        """双击：已下载完成的视频直接打开；未完成无反应"""
+        if self.task.state == "done":
+            p = self._name_path()
+            if os.path.exists(p):
+                _os_open(p)
+            else:
+                _os_reveal(p)
+
+    def _on_name_right(self, e):
+        """右键：已完成的打开或打开所在文件夹；未完成的打开所在文件夹（定位 part 文件）"""
+        m = tk.Menu(self.frame, tearoff=0)
+        p = self._name_path()
+        if self.task.state == "done" and os.path.exists(p):
+            m.add_command(label="打开", command=lambda: _os_open(p))
+            m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(p))
+        else:
+            tp = getattr(self.task, "tmpdir", None)
+            part = None
+            if tp and os.path.isdir(tp):
+                for f in os.listdir(tp):
+                    if f.endswith(".part"):
+                        part = os.path.join(tp, f)
+                        break
+            m.add_command(label="打开所在文件夹",
+                          command=lambda: _os_reveal(part or tp or os.path.dirname(p)))
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
 
     def _on_pause(self):
         self.task.pause()
@@ -1109,24 +1613,29 @@ class TaskRow:
         v = self.mode_cb.get()
         self.task.mode = None if v == "不压缩" else v
 
+    def _draw_bar(self):
+        """自绘进度条：trough + 蓝色进度 + 居中百分比（文字直接画在条上，无底色不遮挡进度）"""
+        W, H = 130, 18
+        if self.task.state == "downloading" and not self.task.total_known:
+            p = 0.0   # 总大小未知：空条
+        else:
+            p = min(max(self.task.progress, 0), 100)
+        c = self.bar
+        c.delete("all")
+        c.create_rectangle(0, 0, W, H, fill="#E8E8E8", outline="")
+        if p > 0:
+            c.create_rectangle(0, 0, max(1, int(W * p / 100)), H, fill="#4A90D9", outline="")
+        c.create_text(W / 2, H / 2, text=f"{p:.0f}%", fill="#111111", font=("Segoe UI", 8))
+
     def refresh(self):
         s = self.task.state
         self.name["text"] = self.task.title
-        mode = "indeterminate" if (s == "downloading" and not self.task.total_known) else "determinate"
-        if mode != self._bar_mode:
-            self._bar_mode = mode
-            self.bar.config(mode=mode)
-            if mode == "indeterminate":
-                self.bar.start(12)
-            else:
-                self.bar.stop()
-        if mode == "determinate":
-            self.bar["value"] = self.task.progress
-        if s == "downloading" and not self.task.total_known:
+        self._draw_bar()
+        if s == "downloading" and self.task.total_known:
+            self.pct["text"] = f"{_fmt_sz(self.task.dl_bytes)}/{_fmt_sz(self.task._total_bytes)}"
+        elif s == "downloading":
             mb = self.task.dl_bytes / 1048576
             self.pct["text"] = f"已下 {mb:.0f}MB" if mb >= 1 else f"已下 {int(self.task.dl_bytes)}B"
-        elif self.task.state == "downloading" and self.task.size_str:
-            self.pct["text"] = f"{self.task.progress:.0f}%（共 {self.task.size_str}）"
         else:
             self.pct["text"] = f"{self.task.progress:.0f}%"
         if s == "waiting":
@@ -1135,19 +1644,23 @@ class TaskRow:
             self.resume_btn.config(state="disabled", text="继续")
         elif s == "downloading":
             self.state_lbl["text"] = "下载中"
+            self.speed_lbl["text"] = _fmt_speed(getattr(self.task, "speed", "") or "")
             self.pause_btn.config(state="normal")
             self.resume_btn.config(state="disabled", text="继续")
         elif s == "paused":
             self.state_lbl["text"] = "已暂停"
+            self.speed_lbl["text"] = ""
             self.pause_btn.config(state="disabled")
             self.resume_btn.config(state="normal", text="继续")
         elif s == "done":
             self.state_lbl["text"] = "完成"
+            self.speed_lbl["text"] = ""
             self.pause_btn.config(state="disabled")
             self.resume_btn.config(state="disabled", text="继续")
             self._grey(True)
         elif s == "failed":
             self.state_lbl["text"] = "失败"
+            self.speed_lbl["text"] = ""
             self.pause_btn.config(state="disabled")
             self.resume_btn.config(state="normal", text="重新下载")
             self._grey(True)
@@ -1167,6 +1680,355 @@ class TaskRow:
             except Exception:
                 pass
 
+def _estimate_eta(samples, now, cur_p):
+    """滑动窗口估算剩余秒数：samples=[(单调时间, 0~100进度)] 按时间升序；
+    窗口=最近 15 秒（时间为主，慢速大文件也能采到足够进展）或 30 个采样点上限，
+    对并发线程增减引起的速度突变有一定跟随能力"""
+    while (len(samples) > 30 or now - samples[0][0] > 15.0) and len(samples) > 2:
+        samples.pop(0)
+    if len(samples) < 2:
+        return None
+    t0, p0 = samples[0]
+    dt = now - t0
+    dp = cur_p - p0
+    if dt < 3.0 or dp < 0.2:      # 采样不足或进展太少，不估（阈值 0.2%：慢速大文件也能在几十秒内开始显示）
+        return None
+    speed = dp / dt               # %/秒，天然跟随并发线程增减引起的速度波动
+    return max(0.0, (100.0 - cur_p) / speed)
+
+def _fmt_eta(secs):
+    """预计剩余时间显示：-- / 约N秒 / 约N分 / 约N时M分"""
+    if not secs:
+        return "--"
+    s = int(secs)
+    if s < 60:
+        return f"约{s}秒"
+    if s < 3600:
+        return f"约{s // 60}分"
+    h, m = divmod(s, 3600)
+    return f"约{h}时{m // 60}分"
+
+def _fmt_size(n):
+    """字节数 → 人类可读（GB/MB/KB/B）"""
+    if n is None or n <= 0:
+        return ""
+    if n >= 1024 ** 3:
+        return f"{n / 1024 ** 3:.2f}GB"
+    if n >= 1024 ** 2:
+        return f"{n / 1024 ** 2:.1f}MB"
+    if n >= 1024:
+        return f"{n / 1024:.0f}KB"
+    return f"{n}B"
+
+ROW_BG = "#F0F0F0"          # 压缩行默认底色
+ROW_BG_ACTIVE = "#D9E9F8"   # 压缩中行底色（30% 透明度淡蓝效果）
+
+class CompressRow:
+    """压缩页中的一行压缩任务（未压缩的可拖动调整优先级）"""
+    def __init__(self, parent, rec, app):
+        self.rec = rec
+        self.app = app
+        self.frame = tk.Canvas(parent, height=30, bg=ROW_BG, bd=0, highlightthickness=0)
+        self.frame.pack(fill="x", padx=4, pady=2)
+        self._cv = self.frame
+        self._cv.bind("<Configure>", self._sync_cv)   # 行尺寸变化：布局右侧组 + 重绘
+        # 文字直接画在 canvas 上（随进度底色走，不用灰底 Label 遮挡进度色）
+        self._txt_name = self._cv.create_text(6, 15, anchor="w",
+                                              text=os.path.basename(rec["path"]), fill="#1f1f1f")
+        self._txt_size = self._cv.create_text(336, 15, anchor="w", text="", fill="#1f1f1f")
+        self._txt_pct = self._cv.create_text(0, 15, anchor="e", text="", fill="#1f1f1f")
+        self._txt_eta = self._cv.create_text(0, 15, anchor="e", text="", fill="#606060")
+        self._txt_state = self._cv.create_text(0, 15, anchor="e", text="排队", fill="#1f1f1f")
+        # 右侧控件：嵌入 canvas（按钮/下拉自带底色，位于行右侧；进度 100% 只到删除按钮右缘）
+        self.stop_btn = ttk.Button(self.frame, text="终止", width=4, command=self._on_stop)
+        self.del_btn = ttk.Button(self.frame, text="−", width=2, command=self._on_delete)
+        self.mode_cb = ttk.Combobox(self.frame, state="readonly", width=16,
+                                    values=list(COMPRESS_MODES.keys()))
+        try:
+            self.mode_cb.current(list(COMPRESS_MODES.keys()).index(rec["mode"]))
+        except ValueError:
+            self.mode_cb.current(0)
+        self.mode_cb.bind("<<ComboboxSelected>>", self._on_mode)
+        self._win_stop = self._cv.create_window(0, 15, window=self.stop_btn, anchor="e")
+        self._win_del = self._cv.create_window(0, 15, window=self.del_btn, anchor="e")
+        self._win_mode = self._cv.create_window(0, 15, window=self.mode_cb, anchor="e")
+        self._stop_shown = False
+        self._cv.itemconfigure(self._win_stop, state="hidden")   # 默认隐藏；压缩中显示
+        # 拖动（命中整行）
+        self._cv.bind("<ButtonPress-1>", self._drag_start)
+        self._cv.bind("<ButtonRelease-1>", self._drag_end)
+        self.frame.bind("<ButtonRelease-1>", self._drag_end)
+        self._drag_src = None
+        # 文件名：双击打开视频；右键打开/打开所在文件夹（执行态仅打开文件夹）
+        self._cv.bind("<Double-1>", self._on_dbl)
+        self._cv.bind("<Button-3>", self._on_rclick)
+
+    def _hit_name(self, e):
+        """事件坐标是否落在文件名文字上"""
+        try:
+            bb = self._cv.bbox(self._txt_name)
+            if not bb:
+                return False
+            return bb[0] <= e.x <= bb[2] and bb[1] <= e.y <= bb[3]
+        except Exception:
+            return False
+
+    def _final_path(self):
+        """双击/右键打开的目标：done 且输出存在 → 输出文件；否则原文件"""
+        r = self.rec
+        if r.get("state") == "done":
+            out = r.get("out")
+            if out and os.path.exists(out):
+                return out
+        p = r.get("path")
+        return p if p and os.path.exists(p) else None
+
+    def _on_dbl(self, e):
+        """双击文件名：结束态打开视频文件；执行态无动作"""
+        try:
+            if not self._hit_name(e):
+                return
+            if self.rec.get("state") == "compressing":
+                return
+            t = self._final_path()
+            if t:
+                _os_open(t)
+        except Exception:
+            pass
+
+    def _on_rclick(self, e):
+        """右键文件名：结束态菜单=打开/打开所在文件夹；执行态=打开所在文件夹"""
+        m = None
+        try:
+            if not self._hit_name(e):
+                return
+            r = self.rec
+            m = tk.Menu(self.frame, tearoff=0)
+            if r.get("state") == "compressing":
+                p = r.get("path")
+                if p and os.path.exists(p):
+                    m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(p))
+            else:
+                t = self._final_path()
+                if t:
+                    m.add_command(label="打开", command=lambda: _os_open(t))
+                    m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(t))
+                elif r.get("path") and os.path.exists(r["path"]):
+                    m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(r["path"]))
+            if m.index("end") is not None:
+                m.tk_popup(e.x_root, e.y_root)
+        except Exception:
+            pass
+        finally:
+            if m is not None:
+                try:
+                    m.grab_release()
+                except Exception:
+                    pass
+
+    def _sync_cv(self, _e=None):
+        """行尺寸变化：同步 canvas 高度 → 重新布局右侧组 → 重绘进度"""
+        try:
+            h = self.frame.winfo_height()
+            if h > 4 and abs(h - int(self._cv.cget("height"))) > 2:
+                self._cv.config(height=h)
+        except Exception:
+            pass
+        self._layout()
+        try:
+            self._cv.update_idletasks()
+        except Exception:
+            pass
+        self._paint_cv()
+
+    def _layout(self):
+        """右侧组从右往左：模式下拉、删除、终止(显示时)、状态文字、百分比文字"""
+        try:
+            W = self._cv.winfo_width()
+            if W <= 20:
+                return
+            y = 15
+            x = W - 6
+            # 用请求宽度而非实际宽度：新行首帧控件未布局时 winfo_width 可能=1，导致删除按钮与下拉重叠
+            self._cv.coords(self._win_mode, x, y); x -= self.mode_cb.winfo_reqwidth() + 6
+            self._cv.coords(self._win_del, x, y); x -= self.del_btn.winfo_reqwidth() + 6
+            if self._stop_shown:
+                self._cv.coords(self._win_stop, x, y); x -= self.stop_btn.winfo_reqwidth() + 6
+            self._cv.coords(self._txt_state, x - 6, y)
+            bb = self._cv.bbox(self._txt_state)
+            if bb:
+                x -= (bb[2] - bb[0]) + 12
+            self._cv.coords(self._txt_eta, x, y)
+            bb = self._cv.bbox(self._txt_eta)
+            if bb:
+                x -= (bb[2] - bb[0]) + 12
+            self._cv.coords(self._txt_pct, x, y)
+        except Exception:
+            pass
+
+    def _paint_cv(self):
+        """画视觉进度：灰底铺满整行 + 淡蓝从左到右填充（100% 正好到删除按钮右边缘）"""
+        s = self.rec.get("state")
+        try:
+            h = self.frame.winfo_height()
+            if h > 4:
+                self._cv.config(height=h)
+        except Exception:
+            h = 60
+        self._cv.delete("bg")
+        if s != "compressing":
+            return
+        try:
+            right = self.del_btn.winfo_x() + self.del_btn.winfo_width()
+        except Exception:
+            right = 0
+        if right <= 0:
+            right = max(self._cv.winfo_width(), 200)
+        p = min(max((self.rec.get("progress") or 0) / 100.0, 0), 1.0)
+        self._cv.create_rectangle(0, 0, right, h, fill=ROW_BG, outline="", tags="bg")
+        if p > 0:
+            self._cv.create_rectangle(0, 0, max(1, int(right * p)), h, fill=ROW_BG_ACTIVE, outline="", tags="bg")
+        self._cv.tag_lower("bg")   # 背景矩形垫到最底层，避免盖住文字/控件（此前压缩开始后文件名被盖成空白）
+
+    def _draw_bar(self):
+        """自绘进度条：trough + 蓝色进度 + 居中百分比（文字直接画在条上，无底色不遮挡进度）"""
+        W, H = 130, 18
+        if self.task.state == "downloading" and not self.task.total_known:
+            p = 0.0   # 总大小未知：空条
+        else:
+            p = min(max(self.task.progress, 0), 100)
+        c = self.bar
+        c.delete("all")
+        c.create_rectangle(0, 0, W, H, fill="#E8E8E8", outline="")
+        if p > 0:
+            c.create_rectangle(0, 0, max(1, int(W * p / 100)), H, fill="#4A90D9", outline="")
+        c.create_text(W / 2, H / 2, text=f"{p:.0f}%", fill="#111111", font=("Segoe UI", 8))
+
+    def refresh(self):
+        r = self.rec
+        s = r["state"]
+        self._cv.itemconfig(self._txt_name, text=os.path.basename(r["path"]))
+        try:
+            in_size = os.path.getsize(r["path"])
+        except Exception:
+            in_size = 0
+        if s == "done" and r.get("out") and os.path.exists(r["out"]):
+            try:
+                out_size = os.path.getsize(r["out"])
+            except Exception:
+                out_size = 0
+            if in_size > 0 and out_size > 0:
+                size_txt = f"{_fmt_size(in_size)} → {_fmt_size(out_size)} ({out_size / in_size * 100:.0f}%)"
+            else:
+                size_txt = f"{_fmt_size(in_size)} → {_fmt_size(out_size)}"
+        else:
+            size_txt = _fmt_size(in_size)
+        self._cv.itemconfig(self._txt_size, text=size_txt)
+        self._cv.itemconfig(self._txt_pct,
+                            text=f"{r['progress']:.0f}%" if s == "compressing" else "")
+        self._cv.itemconfig(self._txt_eta,
+                            text=_fmt_eta(r.get("eta")) if s == "compressing" else "")
+        self._cv.itemconfig(self._txt_state,
+                            text={"queued": "排队", "compressing": "压缩中", "done": "完成",
+                                  "failed": "失败", "stopped": "已停止", "skipped": "收益小已终止"}.get(s, s))
+        # 终止按钮：压缩中显示，其余隐藏；模式/删除状态
+        if s == "compressing":
+            if not self._stop_shown:
+                self._stop_shown = True
+                self._cv.itemconfigure(self._win_stop, state="normal")
+            self.mode_cb.config(state="disabled")
+            self.del_btn.config(state="disabled")
+        else:
+            if self._stop_shown:
+                self._stop_shown = False
+                self._cv.itemconfigure(self._win_stop, state="hidden")
+            if s in ("done", "skipped"):
+                self.mode_cb.config(state="disabled")
+                self.del_btn.config(state="normal")
+            else:
+                self.mode_cb.config(state="readonly")
+                self.del_btn.config(state="normal")
+        self._layout()
+        try:
+            self._cv.update_idletasks()   # create_window 移动后刷新 winfo 坐标，right 才能对齐
+        except Exception:
+            pass
+        self._paint_cv()
+
+    def _confirm_stop(self):
+        """停止/删除执行态任务共用的警告弹窗"""
+        return messagebox.askyesno("停止压缩",
+                "停止后无法从断点继续压缩，需要重新添加该视频再从头压缩。\n确定停止吗？",
+                parent=self.app.root)
+
+    def _on_stop(self):
+        r = self.rec
+        if r["state"] != "compressing":
+            return
+        if not self._confirm_stop():
+            return
+        self.app.cqueue.stop(r)
+        self.refresh()
+
+    def _on_mode(self, _e=None):
+        self.rec["mode"] = self.mode_cb.get()
+
+    def _drag_start(self, e):
+        """按住行：记录拖动源（压缩中的行固定最上、不可拖）"""
+        if self.rec["state"] == "compressing":
+            self._drag_src = None
+            return
+        try:
+            self._drag_src = self.app.cqueue.tasks.index(self.rec)
+        except ValueError:
+            self._drag_src = None
+
+    def _drag_end(self, e):
+        """松开：按鼠标位置计算目标行并移动（优先级调整）"""
+        src = self._drag_src
+        self._drag_src = None
+        if src is None:
+            return
+        try:
+            rows = self.app._cp_inner.winfo_children()
+            dst = src
+            for i, r in enumerate(rows):
+                try:
+                    if r.winfo_rooty() <= e.y_root < r.winfo_rooty() + r.winfo_height():
+                        dst = i
+                        break
+                except Exception:
+                    pass
+            else:
+                if rows and e.y_root > rows[-1].winfo_rooty() + rows[-1].winfo_height():
+                    dst = len(rows) - 1
+            locked = sum(1 for t in self.app.cqueue.tasks if t["state"] != "queued")
+            dst = max(dst, locked)
+            if dst != src and self.app.cqueue.move(src, dst):
+                self.app._reorder_compress_rows()
+                self.app._relayout_compress_rows()
+        except Exception:
+            pass
+
+    def _on_delete(self):
+        r = self.rec
+        if r["state"] == "compressing":
+            # 执行态：与停止按钮共用警告弹窗，确认后终止并移出列表（未完成输出已由 stop 删除）
+            if not self._confirm_stop():
+                return
+            self.app.cqueue.stop(r)
+            self.app.cqueue.remove(r)
+            self.frame.destroy()
+            self.app.log(f"已终止并从压缩队列移除：{os.path.basename(r['path'])}")
+            return
+        # 结束态/排队：只移出列表，不删除任何文件
+        if self.app.cqueue.remove(r):
+            self.frame.destroy()
+            self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
+            return
+        if self.app.cqueue.remove(r):
+            self.frame.destroy()
+            self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
 class App:
     def __init__(self, root):
         self.root = root
@@ -1175,23 +2037,83 @@ class App:
         self._cleanup_stale_tmpdirs()
         self.q = queue.Queue()
         self.sniffer = None
+        # 退出清理：防止 pythonw 进程残留（下载/嗅探线程阻止退出）
+        self.root.protocol("WM_DELETE_WINDOW", self._on_exit)
+
         self.current_info = None
+
         self.formats = []
         self.captured = []
         self.cap_meta = {}
         self.hls_formats = []
         self.hls_urls = []
         self._hover_row = None
+        self._probe_seq = 0   # 探测任务版本号：再次点击即作废上一轮
         self._dl_btn = None
         self.log_visible = False
         self.pool = DownloadPool(lambda ev: self.q.put(("ui", ev)), self.log)
         self.cqueue = CompressQueue(self.log, self._ui_event)
+        self._load_compress_settings()
         self._build_ui()
         self._start_capture_server()
         root.after(100, self._poll_queue)
 
+    def _on_exit(self):
+        """退出清理：任务进行中 → 确认弹窗 + 杀进程树（下载 yt-dlp / 压缩 ffmpeg）；关闭嗅探 Chrome。"""
+        # 1) 统计进行中任务（下载中 / 压缩中）
+        dl = [t for t in self.pool.tasks
+              if t.state == "downloading" and getattr(t, "proc", None) is not None and t.proc.poll() is None]
+        cp = [r for r in self.cqueue.tasks if r["state"] == "compressing"]
+        if dl or cp:
+            if not messagebox.askyesno(
+                    "任务进行中",
+                    f"当前有 {len(dl) + len(cp)} 个任务正在进行（下载 {len(dl)} 个、压缩 {len(cp)} 个）。\n"
+                    "退出会中断这些任务，已下载的部分可能不完整。\n确定要退出吗？",
+                    parent=self.root):
+                return
+        # 2) 杀下载进程树（yt-dlp 可能带 ffmpeg 合并子进程）
+        for t in dl:
+            _kill_proc_tree(t.proc)
+        # 3) 杀压缩进程树（ffmpeg）
+        for r in cp:
+            ph = r.get("_ph") or {}
+            p = ph.get("proc")
+            if p is not None:
+                _kill_proc_tree(p)
+        # 4) 关闭嗅探播放 Chrome 并强制退出，防止 pythonw 进程残留
+        try:
+            sn = getattr(self, "sniffer", None)
+            if sn is not None:
+                try:
+                    sn.stop()
+                except Exception:
+                    pass
+                proc = getattr(sn, "proc", None)
+                if proc is not None and proc.poll() is None:
+                    try:
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                       capture_output=True, timeout=5)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
+            self.log("===== 程序退出（已清理任务进程）=====")
+        except Exception:
+            pass
+        try:
+            os.remove(os.path.join(SCRIPT_DIR, "eazyvid.lock"))
+        except OSError:
+            pass
+        os._exit(0)
+
     def _load_dl_dir(self):
-        """读取上次选择的下载目录（记忆配置；不存在/失效则回退程序目录）"""
+        """读取下载目录（设置页配置；默认=程序目录/downloaded；不存在则创建）"""
+        default = os.path.join(SCRIPT_DIR, "downloaded")
+        try:
+            os.makedirs(default, exist_ok=True)
+        except OSError:
+            pass
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as _f:
                 _d = json.load(_f).get("download_dir", "")
@@ -1199,15 +2121,60 @@ class App:
                 return _d
         except Exception:
             pass
-        return SCRIPT_DIR
+        return default
 
     def _save_dl_dir(self, *_):
         """保存当前下载目录到配置（目录变化即写入；仅保存存在的目录）"""
         try:
             _d = self.dl_dir_var.get().strip()
             if _d and os.path.isdir(_d):
+                try:
+                    with open(SETTINGS_FILE, "r", encoding="utf-8") as _f:
+                        _cfg = json.load(_f)
+                except Exception:
+                    _cfg = {}
+                _cfg["download_dir"] = _d
                 with open(SETTINGS_FILE, "w", encoding="utf-8") as _f:
-                    json.dump({"download_dir": _d}, _f, ensure_ascii=False)
+                    json.dump(_cfg, _f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _load_compress_settings(self):
+        """读取压缩输出设置（same/custom + 目录）"""
+        self._compress_mode = "same"
+        self._compress_dir = ""
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+            self._compress_dir = _cfg.get("compress_dir", "")
+            self._max_workers = max(1, int(_cfg.get("max_workers", 1) or 1))
+            self.cqueue.max_workers = self._max_workers
+            self.cqueue._start_workers()
+            self._compress_mode = _cfg.get("compress_mode", "same")
+            self._compress_dir = _cfg.get("compress_dir", "")
+        except Exception:
+            pass
+        if self._compress_mode == "custom" and self._compress_dir and os.path.isdir(self._compress_dir):
+            self.cqueue.out_dir = self._compress_dir
+        else:
+            if self._compress_mode == "custom":
+                self._compress_mode = "same"
+                self._compress_dir = ""
+            self.cqueue.out_dir = None
+
+    def _save_compress_settings(self):
+        """保存压缩输出设置"""
+        try:
+            try:
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as _f:
+                    _cfg = json.load(_f)
+            except Exception:
+                _cfg = {}
+            _cfg["compress_mode"] = self._compress_mode
+            _cfg["compress_dir"] = self._compress_dir
+            _cfg["max_workers"] = getattr(self, "_max_workers", 1)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as _f:
+                json.dump(_cfg, _f, ensure_ascii=False)
         except Exception:
             pass
 
@@ -1236,31 +2203,49 @@ class App:
 
     def _build_ui(self):
         pad = {"padx": 8, "pady": 4}
-        top = ttk.Frame(self.root)
+
+        # ---- 顶部固定：标题 + 功能选项卡 ----
+        self._topbar = ttk.Frame(self.root)
+        self._topbar.pack(fill="x", **pad)
+        ttk.Label(self._topbar, text="eazyVid 视频处理平台", font=("", 12, "bold")).pack(side="left", padx=4)
+        self._tab_dl = ttk.Button(self._topbar, text="● 视频下载", width=12, command=lambda: self._show_page("dl"))
+        self._tab_dl.pack(side="left", padx=6)
+        self._tab_cp = ttk.Button(self._topbar, text="○ 视频压缩", width=12, command=lambda: self._show_page("cp"))
+        self._tab_cp.pack(side="left", padx=6)
+        self._gear_btn = ttk.Button(self._topbar, text="⚙", width=3, command=self._open_settings)
+        self._gear_btn.pack(side="left", padx=2)
+
+        # ---- 中部内容区（tab 切换）----
+        self._content = ttk.Frame(self.root)
+        self._content.pack(fill="both", expand=True)
+        self._dl_page = ttk.Frame(self._content)
+        self._cp_page = ttk.Frame(self._content)
+
+        # ===== 下载页 =====
+        # 下载目录（由设置页配置；默认=程序目录/downloaded）
+        self.dl_dir_var = tk.StringVar(value=self._load_dl_dir())
+        self.dl_dir_var.trace_add("write", self._save_dl_dir)
+        top = ttk.Frame(self._dl_page)
         top.pack(fill="x", **pad)
         ttk.Label(top, text="视频页 URL:").pack(side="left")
         self.url_var = tk.StringVar()
         self.url_entry = ttk.Entry(top, textvariable=self.url_var, width=64)
         self.url_entry.pack(side="left", fill="x", expand=True, padx=4)
         self._make_rightclick_menu(self.url_entry)
+        # 粘贴时自动提取 URL（分享文本+链接混杂，如抖音/微博分享文案）
+        self.url_entry.bind("<Control-v>", self._paste_url_extract)
+        self.url_entry.bind("<<Paste>>", self._paste_url_extract)
         ttk.Button(top, text="探测格式", command=self.on_probe).pack(side="left", padx=2)
+        self._probe_bar = ttk.Progressbar(top, mode="indeterminate", length=120)
+        self._probe_bar.pack_forget()
 
-        # 下载目录
-        drow = ttk.Frame(self.root)
-        drow.pack(fill="x", **pad)
-        ttk.Label(drow, text="下载到:").pack(side="left")
-        self.dl_dir_var = tk.StringVar(value=self._load_dl_dir())
-        self.dl_dir_var.trace_add("write", self._save_dl_dir)
-        ttk.Entry(drow, textvariable=self.dl_dir_var, width=64).pack(side="left", fill="x", expand=True, padx=4)
-        ttk.Button(drow, text="浏览…", command=self._pick_dir).pack(side="left", padx=2)
 
-        # 格式列表（探测/嗅探共用）
-        frm = ttk.LabelFrame(self.root, text="格式列表（鼠标移到行上点「下载」；⚠=AV1/VP9 部分播放器不支持）")
+        frm = ttk.LabelFrame(self._dl_page, text="格式列表（鼠标移到行上点「下载」；⚠=AV1/VP9 部分播放器不支持）")
         frm.pack(fill="both", expand=True, **pad)
-        cols = ("res", "fid", "codec", "size", "src")
+        cols = ("res", "fid", "codec", "size")
         self.fmt_tree = ttk.Treeview(frm, columns=cols, show="headings", height=9)
-        for k, (t, w) in {"res": ("分辨率", 120), "fid": ("格式ID", 90), "codec": ("编码", 160),
-                          "size": ("大小", 90), "src": ("来源", 60)}.items():
+        for k, (t, w) in {"res": ("分辨率", 76), "fid": ("格式ID", 56), "codec": ("编码", 170),
+                          "size": ("大小", 66)}.items():
             self.fmt_tree.heading(k, text=t)
             self.fmt_tree.column(k, width=w, anchor="w")
         self.fmt_tree.pack(fill="both", expand=True)
@@ -1271,8 +2256,7 @@ class App:
         self._dl_btn = ttk.Button(self.fmt_tree, text="⬇ 下载", width=8)
         self._dl_btn.place_forget()
 
-        # 下载池
-        pf = ttk.LabelFrame(self.root, text="下载池（并行下载，可暂停/恢复；每行可选压缩模式）")
+        pf = ttk.LabelFrame(self._dl_page, text="下载池（并行下载，可暂停/恢复；每行可选压缩模式）")
         pf.pack(fill="both", expand=True, **pad)
         self._pool_canvas = tk.Canvas(pf, height=190)
         sb = ttk.Scrollbar(pf, orient="vertical", command=self._pool_canvas.yview)
@@ -1283,10 +2267,40 @@ class App:
         self._pool_canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
-        # 日志抽屉
-        self._log_btn = ttk.Button(self.root, text="▸ 日志（调试）", command=self._toggle_log)
-        self._log_btn.pack(anchor="w", padx=8)
-        self.log_text = tk.Text(self.root, height=8, state="disabled", wrap="word")
+        # ===== 压缩页 =====
+        cptop = ttk.Frame(self._cp_page)
+        cptop.pack(fill="x", **pad)
+        ttk.Label(cptop, text="压缩队列").pack(side="left")
+        ttk.Button(cptop, text="添加视频…", command=self._pick_compress_files).pack(side="left", padx=6)
+        ttk.Button(cptop, text="添加文件夹…", command=self._pick_compress_dir).pack(side="left", padx=6)
+        self.compress_mode_var = tk.StringVar(value="x265 默认(推荐)")
+        ttk.Combobox(cptop, textvariable=self.compress_mode_var, state="readonly",
+                     values=list(COMPRESS_MODES.keys()), width=16).pack(side="left", padx=6)
+        ttk.Button(cptop, text="开始压缩", command=self._cq_start).pack(side="left", padx=6)
+        ttk.Label(cptop, text="（下载完成的按原选择，手动添加的用此默认模式）", foreground="#888").pack(side="left", padx=6)
+        cpf = ttk.LabelFrame(self._cp_page, text="压缩任务")
+        cpf.pack(fill="both", expand=True, **pad)
+        self._cp_canvas = tk.Canvas(cpf, height=300)
+        sb2 = ttk.Scrollbar(cpf, orient="vertical", command=self._cp_canvas.yview)
+        self._cp_inner = ttk.Frame(self._cp_canvas)
+        self._cp_win = self._cp_canvas.create_window((0, 0), window=self._cp_inner, anchor="nw")
+        self._cp_inner.bind("<Configure>", lambda e: self._cp_canvas.configure(scrollregion=self._cp_canvas.bbox("all")))
+        self._cp_canvas.bind("<Configure>", lambda e: self._cp_canvas.itemconfigure(self._cp_win, width=e.width))
+        self._cp_canvas.pack(side="left", fill="both", expand=True)
+        sb2.pack(side="right", fill="y")
+        ttk.Label(self._cp_page,
+                  text="模式说明：x265 默认≈体积减半画质不变；高画质最接近原片；小体积最省空间；NVENC 用显卡编码最快。",
+                  foreground="#666").pack(anchor="w", padx=8)
+
+        # 默认显示下载页
+        self._show_page("dl")
+
+        # ---- 底部固定：日志 ----
+        self._bottom_bar = ttk.Frame(self.root)
+        self._bottom_bar.pack(fill="x", **pad)
+        self._log_btn = ttk.Button(self._bottom_bar, text="▸ 日志（调试）", command=self._toggle_log)
+        self._log_btn.pack(anchor="w")
+        self.log_text = tk.Text(self._bottom_bar, height=7, state="disabled", wrap="word")
         self.logfile = os.path.join(SCRIPT_DIR, "eazyvid.log")
         try:
             with open(self.logfile, "a", encoding="utf-8") as _lf:
@@ -1295,17 +2309,211 @@ class App:
             pass
         self.log("就绪：粘贴视频地址 → 解析；失败会引导你播放视频页。")
 
-    def _make_rightclick_menu(self, widget):
-        """右键直接粘贴（tkinter 默认没有右键粘贴）"""
-        def paste(e):
-            try:
-                if widget.clipboard_get():
-                    widget.delete(0, "end")
-                    widget.event_generate("<<Paste>>")
-            except Exception:
-                pass
-        widget.bind("<Button-3>", paste)
+    def _show_page(self, name):
+        """切换下载页/压缩页（top bar 与 bottom 不动）"""
+        for w in (self._dl_page, self._cp_page):
+            w.pack_forget()
+        if name == "cp":
+            self._cp_page.pack(fill="both", expand=True)
+            self._tab_dl.config(text="○ 视频下载")
+            self._tab_cp.config(text="● 视频压缩")
+        else:
+            self._dl_page.pack(fill="both", expand=True)
+            self._tab_dl.config(text="● 视频下载")
+            self._tab_cp.config(text="○ 视频压缩")
 
+    def _center_window(self, win, w, h):
+        """弹窗对齐到主面板中心"""
+        try:
+            self.root.update_idletasks()
+            rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+            rw, rh = self.root.winfo_width(), self.root.winfo_height()
+            x = rx + (rw - w) // 2
+            y = ry + (rh - h) // 2
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            win.geometry(f"{w}x{h}")
+
+    def _open_settings(self):
+        """设置弹窗：下载目录 + 压缩输出目录（后续功能在此逐项增加）"""
+        win = tk.Toplevel(self.root)
+        win.title("设置")
+        self._center_window(win, 560, 260)
+        win.transient(self.root)
+        win.grab_set()
+        wp = {"padx": 8, "pady": 5}
+
+        ttk.Label(win, text="视频下载目录:").grid(row=0, column=0, sticky="w", **wp)
+        dl_var = tk.StringVar(value=self.dl_dir_var.get())
+        ttk.Entry(win, textvariable=dl_var, width=44).grid(row=0, column=1, sticky="we", **wp)
+        ttk.Button(win, text="浏览…", width=6,
+                   command=lambda: self._settings_pick_dir(dl_var)).grid(row=0, column=2, **wp)
+
+        ttk.Separator(win).grid(row=1, column=0, columnspan=3, sticky="we", pady=6)
+
+        ttk.Label(win, text="压缩输出目录:").grid(row=2, column=0, sticky="w", **wp)
+        cmode = tk.StringVar(value=self._compress_mode)
+        cdir_var = tk.StringVar(value=self._compress_dir)
+        ttk.Radiobutton(win, text="与源文件同目录（默认）", value="same", variable=cmode).grid(row=2, column=1, sticky="w", **wp)
+        ttk.Radiobutton(win, text="指定目录", value="custom", variable=cmode).grid(row=3, column=1, sticky="w", **wp)
+        cdir_entry = ttk.Entry(win, textvariable=cdir_var, width=44)
+        cdir_entry.grid(row=4, column=1, sticky="we", **wp)
+        ttk.Button(win, text="浏览…", width=6,
+                   command=lambda: self._settings_pick_dir(cdir_var)).grid(row=4, column=2, **wp)
+
+        def on_mode_change(*_):
+            st = "normal" if cmode.get() == "custom" else "disabled"
+            cdir_entry.config(state=st)
+        cmode.trace_add("write", on_mode_change)
+        on_mode_change()
+
+        def ok():
+            d = dl_var.get().strip()
+            if not d:
+                messagebox.showwarning("提示", "下载目录不能为空", parent=win)
+                return
+            if not os.path.isdir(d):
+                try:
+                    os.makedirs(d, exist_ok=True)
+                except OSError:
+                    messagebox.showwarning("提示", f"无法创建目录：{d}", parent=win)
+                    return
+            self.dl_dir_var.set(d)
+            self._compress_mode = cmode.get()
+            self._compress_dir = cdir_var.get().strip()
+            if self._compress_mode == "custom" and not (self._compress_dir and os.path.isdir(self._compress_dir)):
+                messagebox.showwarning("提示", "指定目录无效（不存在或未选择），已改为与源文件同目录", parent=win)
+                self._compress_mode = "same"
+                self._compress_dir = ""
+            self._max_workers = max(1, int(workers_var.get() or 1))
+            self.cqueue.max_workers = self._max_workers
+            self.cqueue._start_workers()
+            self._save_compress_settings()
+            self.cqueue.out_dir = self._compress_dir if self._compress_mode == "custom" else None
+            win.destroy()
+            tail = "与源文件同目录" if self._compress_mode == "same" else self._compress_dir
+            self.log(f"设置已保存：下载目录 {d}；压缩输出 {tail}")
+
+        ttk.Separator(win).grid(row=5, column=0, columnspan=3, sticky="we", pady=6)
+        ttk.Label(win, text="同时压缩数:").grid(row=6, column=0, sticky="w", **wp)
+        workers_var = tk.StringVar(value=str(getattr(self, "_max_workers", 1)))
+        workers_entry = ttk.Entry(win, textvariable=workers_var, width=8)
+        workers_entry.grid(row=6, column=1, sticky="w", **wp)
+        workers_entry.configure(validate="key",
+                                validatecommand=(win.register(lambda p: p == "" or p.isdigit()), "%P"))
+        ttk.Label(win, text="（建议 1~4，过大会占满 CPU/磁盘）", foreground="#888").grid(row=6, column=2, sticky="w", **wp)
+        btns = ttk.Frame(win)
+        btns = ttk.Frame(win)
+        btns.grid(row=7, column=1, columnspan=2, sticky="e", pady=10)
+        ttk.Button(btns, text="确定", width=8, command=ok).pack(side="left", padx=4)
+        ttk.Button(btns, text="取消", width=8, command=win.destroy).pack(side="left", padx=4)
+        win.columnconfigure(1, weight=1)
+        win.resizable(False, False)
+
+    def _settings_pick_dir(self, var):
+        d = filedialog.askdirectory(initialdir=var.get() or SCRIPT_DIR, parent=self.root)
+        if d:
+            var.set(d)
+
+    def _cq_start(self):
+        """开始压缩：唤醒队列处理排队任务（手动模式，点此才真正开始压）"""
+        self.cqueue.start()
+        n = sum(1 for t in self.cqueue.tasks if t["state"] == "queued")
+        self.log(f"开始压缩：队列 {n} 个任务，并发 {self.cqueue.max_workers}")
+
+    def _reorder_compress_rows(self):
+        """压缩行排序：结束态(done/stopped/skipped/failed)最上 → 压缩中 → 排队；
+        各组内保持原有相对顺序（稳定排序）"""
+        with self.cqueue._lock:
+            def grp(t):
+                s = t["state"]
+                if s in ("done", "stopped", "skipped", "failed"):
+                    return 0
+                if s == "compressing":
+                    return 1
+                return 2
+            self.cqueue.tasks.sort(key=grp)
+
+    def _relayout_compress_rows(self):
+        """按 tasks 顺序重排压缩行（pack 顺序即显示顺序）"""
+        try:
+            for w in self._cp_inner.winfo_children():
+                w.pack_forget()
+            for t in self.cqueue.tasks:
+                if t.get("row") is not None:
+                    try:
+                        t["row"].frame.pack(fill="x", padx=4, pady=2)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _pick_compress_files(self):
+        files = filedialog.askopenfilenames(
+            title="选择要压缩的视频",
+            filetypes=[("视频文件", "*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.webm *.ts *.m4v"), ("所有文件", "*.*")],
+            parent=self.root)
+        n = 0
+        for f in files:
+            self.cqueue.add(f, self.compress_mode_var.get())
+            n += 1
+        if n:
+            self.log(f"已添加 {n} 个文件到压缩队列")
+    def _pick_compress_dir(self):
+        """选择文件夹：递归扫描（目录穿透）所有视频文件加入压缩队列"""
+        d = filedialog.askdirectory(
+            title="选择要压缩的视频文件夹（含子目录）",
+            initialdir=self.cqueue.out_dir or os.path.join(SCRIPT_DIR, "downloaded")
+            if os.path.isdir(os.path.join(SCRIPT_DIR, "downloaded")) else SCRIPT_DIR,
+            parent=self.root)
+        if not d:
+            return
+        exts = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".ts", ".m4v",
+                ".mpg", ".mpeg", ".3gp", ".m2ts", ".vob")
+        found = []
+        for _root, _dirs, files in os.walk(d):
+            for fn in files:
+                if fn.lower().endswith(exts):
+                    found.append(os.path.join(_root, fn))
+        if not found:
+            messagebox.showinfo("添加文件夹", "该目录下没有找到视频文件（含子目录）", parent=self.root)
+            return
+        if not messagebox.askyesno(
+                "添加文件夹", f"找到 {len(found)} 个视频文件（含子目录）\n加入压缩队列？",
+                parent=self.root):
+            return
+        existing = {t["path"].lower() for t in self.cqueue.tasks}
+        dup, added = 0, 0
+        for f in found:
+            if f.lower() in existing:
+                dup += 1
+                continue
+            self.cqueue.add(f, self.compress_mode_var.get())
+            existing.add(f.lower())
+            added += 1
+        self.log(f"添加文件夹：找到 {len(found)} 个视频，新入队 {added}，已在队列 {dup} 个（含子目录）")
+
+
+    def _paste_url_extract(self, event=None):
+        """粘贴时自动提取 URL：从分享文本里抓出第一个链接填入输入框"""
+        w = getattr(event, "widget", None) if event else getattr(self, "url_entry", None)
+        if w is None:
+            w = self.url_entry
+        try:
+            clip = w.clipboard_get()
+        except Exception:
+            return "break" if event else None
+        url = _extract_url(clip) or clip
+        w.delete(0, "end")
+        w.insert(0, url)
+        if event:
+            return "break"
+
+    def _make_rightclick_menu(self, widget):
+        """右键直接粘贴（tkinter 默认没有右键粘贴；同样走 URL 自动提取）"""
+        def paste(e):
+            self._paste_url_extract(e)
+        widget.bind("<Button-3>", paste)
     def _pick_dir(self):
         d = filedialog.askdirectory(initialdir=self.dl_dir_var.get() or SCRIPT_DIR)
         if d:
@@ -1367,8 +2575,12 @@ class App:
                 if kind == "log":
                     self._show_log(item[1])
                 elif kind == "formats":
+                    self._probe_bar.stop()
+                    self._probe_bar.pack_forget()
                     self._show_formats(item[1])
                 elif kind == "probe_fail":
+                    self._probe_bar.stop()
+                    self._probe_bar.pack_forget()
                     self._probe_failed(item[1])
                 elif kind == "capture":
                     self._on_capture_url(item[1])
@@ -1396,16 +2608,31 @@ class App:
                         pass
                 elif kind == "sniff_timeout":
                     messagebox.showinfo("未捕获到视频",
-                        "这一分钟内没有嗅探到视频文件。\n常见原因：播放器加载过快，视频流请求早于嗅探连接。\n请在播放窗口按 F5 刷新页面（重新触发视频流请求），\n然后重新点「探测格式」。")
+                        "这一分钟内没有嗅探到视频文件。\n常见原因：播放器加载过快，视频流请求早于嗅探连接。\n请在播放窗口按 F5 刷新页面（重新触发视频流请求），\n然后重新点「探测格式」。", parent=self.root)
                 elif kind == "ui":
                     self._ui_event(item[1])
                 elif kind in ("added", "progress", "paused"):
                     self._ui_event((kind, item[1]))
                 elif kind == "done":
                     self._ui_event(("done", item[1]))
-                elif kind == "compressed":
-                    path, out, ok = item[1]
-                    self.log(f"压缩{'成功' if ok else '失败'}：{os.path.basename(out or path)}")
+                elif kind in ("cqueued", "cstarted", "cprogress", "cdone"):
+                    rec = item[1]
+                    if rec.get("row") is None:
+                        try:
+                            rec["row"] = CompressRow(self._cp_inner, rec, self)
+                        except Exception:
+                            pass
+                    if rec.get("row"):
+                        try:
+                            rec["row"].refresh()
+                        except Exception:
+                            pass
+                    if kind in ("cqueued", "cstarted", "cdone"):
+                        self._reorder_compress_rows()
+                        self._relayout_compress_rows()
+                    if kind == "cdone":
+                        tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
+                        self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
         except queue.Empty:
             pass
         self.root.after(100, self._poll_queue)
@@ -1414,8 +2641,17 @@ class App:
     def on_probe(self):
         url = self.url_var.get().strip()
         if not url:
-            messagebox.showwarning("提示", "请先粘贴视频页 URL")
+            messagebox.showwarning("提示", "请先粘贴视频页 URL", parent=self.root)
             return
+        # 再次点击：作废上一轮任务（杀旧探测进程、停止嗅探会话），以本次为准
+        self._probe_seq += 1
+        self._halt_probes()
+        sn = getattr(self, "sniffer", None)
+        if sn is not None:
+            try:
+                sn.stop()
+            except Exception:
+                pass
         # 新地址：清空上一轮列表与捕获，避免新旧结果混在一起
         self.formats = []
         self.captured = []
@@ -1424,17 +2660,28 @@ class App:
         self._hide_dl_btn()
         self.fmt_tree.delete(*self.fmt_tree.get_children())
         self.log(f"正在探测：{url}")
-        threading.Thread(target=self._probe_worker, args=(url,), daemon=True).start()
+        self._probe_bar.pack(side="left", padx=4)
+        self._probe_bar.start(15)
+        threading.Thread(target=self._probe_worker, args=(url, self._probe_seq), daemon=True).start()
 
-    def _probe_worker(self, url):
+    def _probe_worker(self, url, seq):
         info, err = probe_url(url)
+        if seq != self._probe_seq:
+            return  # 已被新一轮探测取代，丢弃
+        # Fresh cookies：跳过缓存强制重取实时 cookie 重试一次（嗅探窗口访问过 → CDP 拿到新 cookie）
+        if not info and err and "cookie" in err.lower():
+            self.log("探测需要新鲜 cookie，已用实时 cookie 重试…")
+            info, err = probe_url(url, force_cookie=True)
+            if seq != self._probe_seq:
+                return
         if info:
             fmts = extract_formats(info)
             if fmts:
                 self.q.put(("formats", fmts))
                 return
-        # -J 失败/无格式 → 回退 -F 格式表（与命令行脚本一致；很多站 -F 可直接探测）
         fmts2, err2 = probe_formats_f(url)
+        if seq != self._probe_seq:
+            return
         if fmts2:
             self.log("探测 -J 失败，已回退 -F 格式表成功")
             self.q.put(("formats", fmts2))
@@ -1446,15 +2693,8 @@ class App:
         self.log(f"探测失败：{err}")
         win = tk.Toplevel(self.root)
         win.title("需要你播放一次")
-        win.geometry("480x210")
+        self._center_window(win, 480, 210)
         win.transient(self.root)
-        # 位于主窗口正中间
-        try:
-            x = self.root.winfo_rootx() + (self.root.winfo_width() - 480) // 2
-            y = self.root.winfo_rooty() + (self.root.winfo_height() - 210) // 2
-            win.geometry(f"480x210+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
         tk.Label(win, text="视频文件藏得比较深，需要你在我们的窗口\n再点击一次播放。",
                  font=("Microsoft YaHei", 13), pady=12).pack()
         tk.Label(win, text="需要登录的网站请先在播放窗口登录一次（登录状态会保留，以后免登录）。",
@@ -1472,11 +2712,11 @@ class App:
             pass
         self.log(f"嗅探：打开播放窗口 {url}")
         global _SNIFFER
-        self.sniffer = Sniffer(self.log, self._on_sniff_event)
+        self.sniffer = Sniffer(self.log, self._on_sniff_event, self.root)
         _SNIFFER = self.sniffer
         err = self.sniffer.start(url)
         if err:
-            messagebox.showerror("错误", err)
+            messagebox.showerror("错误", err, parent=self.root)
 
     def _on_sniff_event(self, kind, payload):
         if kind == "captured":
@@ -1490,7 +2730,12 @@ class App:
         if self._is_hls_segment(url):
             self._merge_hls_segment(url)
             return
-        if any(u == url for u, in self.captured):
+        # Range 字节流分片（URL 带 bytes=0-5019 的渐进式拉流）：还原完整视频 URL，片段不单独入列
+        norm = self._normalize_range_url(url)
+        if norm:
+            url = norm
+        key = self._capture_key(url)
+        if any(self._capture_key(u) == key for u, in self.captured):
             return
         self.captured.append((url,))
         try:
@@ -1511,8 +2756,8 @@ class App:
             res_label, codec_label = "视频流(HLS)", "HLS"
             self._hls_seq = getattr(self, "_hls_seq", 0) + 1
             ph = f"hls_ph_{self._hls_seq}"
-            self.fmt_tree.insert("", 0, iid=ph, values=(res_label, "捕获", codec_label, "解析中…", "嗅探"))
-            threading.Thread(target=self._probe_hls, args=(url, ph), daemon=True).start()
+            self.fmt_tree.insert("", 0, iid=ph, values=(res_label, "捕获", codec_label, "解析中…"))
+            threading.Thread(target=self._probe_hls, args=(url, ph, self._probe_seq), daemon=True).start()
             return
         elif ".mpd" in url:
             res_label, codec_label = "视频流(DASH)", "DASH"
@@ -1523,7 +2768,7 @@ class App:
         else:
             res_label, codec_label = "视频流?", "未知"
         iid = self.fmt_tree.insert("", 0, values=(
-            res_label, "捕获", codec_label, "解析中…", "嗅探"))
+            res_label, "捕获", codec_label, "解析中…"))
         sn = getattr(self, "sniffer", None) or _SNIFFER
         if not (sn and sn.page_tip("已捕获视频流，请回主窗口下载")):
             self._show_tooltip("已捕获视频文件，请回到主窗口点「下载」")
@@ -1533,6 +2778,37 @@ class App:
             self.log(f"嗅探捕获音频流：{url}")
         else:
             self.log(f"嗅探捕获视频流 {res_label}：{url}")
+
+    def _capture_key(self, url):
+        # 同一视频流的不同变体（bytes/expires/sig/ct 及网络参数变化）归并为一条：
+        # 用主机+路径+稳定参数（mid/id/type/subId 等）作为身份标识。
+        try:
+            from urllib.parse import urlparse, parse_qs
+            p = urlparse(url)
+            q = parse_qs(p.query)
+            stable = []
+            for k in sorted(q.keys()):
+                if k in ("bytes", "expires", "sig", "ct", "ch", "ms", "srcIp", "srcAg", "pr", "urls", "clientType", "cmd"):
+                    continue
+                stable.append("{0}={1}".format(k, q[k][0]))
+            return p.scheme + "://" + p.netloc + p.path + "?" + "&".join(stable)
+        except Exception:
+            return url
+
+    @staticmethod
+    def _normalize_range_url(url):
+        # 带 bytes= 的渐进式 Range 拉流（OK.ru 等）：bytes 只是字节区间参数，
+        # 去掉后即完整视频 URL。通用：任何带 bytes= 的视频流请求都适用。
+        try:
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+            p = urlparse(url)
+            q = parse_qs(p.query)
+            if "bytes" not in q:
+                return None
+            q.pop("bytes", None)
+            return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(q, doseq=True), p.fragment))
+        except Exception:
+            return None
 
     @staticmethod
     def _is_hls_segment(url):
@@ -1596,6 +2872,14 @@ class App:
             self.log(f"探测 {url[-60:]}：HEAD 失败（无大小），等 yt-dlp -J 兜底")
 
     def _probe_j(self, url, iid, h):
+        # -J 下载探测限流：最多 2 个并发，避免多档并行 yt-dlp 下载探测拖慢系统
+        with threading.Semaphore(2):
+            try:
+                self._probe_j_impl(url, iid, h)
+            except Exception:
+                pass
+
+    def _probe_j_impl(self, url, iid, h):
         """yt-dlp -J 后台补精确分辨率/大小（不覆盖 HEAD 已拿到的大小）"""
         try:
             args = [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist", "-J", "--no-warnings"]
@@ -1604,10 +2888,24 @@ class App:
             if ref and "googlevideo.com" not in url:
                 args += ["--referer", ref]
             args.append(url)
-            r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=60, creationflags=NO_WINDOW | 0x00004000)
-            if r.returncode == 0:
-                info = json.loads(r.stdout)
+            procs = getattr(self, "_probe_procs", None)
+            if procs is None:
+                procs = self._probe_procs = set()
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    encoding="utf-8", errors="replace",
+                                    creationflags=NO_WINDOW | 0x00004000)
+            procs.add(proc)
+            try:
+                try:
+                    out, _ = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    out, _ = proc.communicate()
+            finally:
+                procs.discard(proc)
+            rc = proc.returncode
+            if rc == 0:
+                info = json.loads(out)
                 size2 = info.get("filesize") or info.get("filesize_approx")
                 h2 = info.get("height") or 0
                 w2 = info.get("width") or 0
@@ -1617,22 +2915,53 @@ class App:
                                 (f"{w2}x{h2}" if h2 else (f"~{h}p" if h else ""))))
                     self.log(f"探测 {url[-60:]}：-J 精确 {w2}x{h2} / {format_size(size2) if size2 else '无大小'}")
             else:
-                self.log(f"探测 {url[-60:]}：-J 失败 rc={r.returncode}（{((r.stderr or '').strip().splitlines() or [''])[-1][:120]}）")
+                err = (out or "").strip().splitlines() or [""]
+                self.log(f"探测 {url[-60:]}：-J 失败 rc={rc}（{err[-1][:120]}）")
         except Exception as e:
             self.log(f"探测 {url[-60:]}：-J 异常 {e}")
+
+    def _halt_probes(self):
+        # 下载开始：停掉所有后台 -J 探测（避免探测悄悄下载文件头与正式下载抢带宽/磁盘）
+        procs = getattr(self, "_probe_procs", None)
+        if procs:
+            for p in list(procs):
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            procs.clear()
+        self.log("下载开始，已停止后台探测")
+
+    def _probe_done_res(self, path):
+        # 下载完成后 ffprobe 分辨率/编码，写日志（不压缩也能知道清晰度）
+        try:
+            if not os.path.exists(path):
+                return
+            r = subprocess.run([FFMPEG, "-i", path], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=20, creationflags=NO_WINDOW | 0x00004000)
+            m = re.search(r"(\d{2,4})x(\d{2,4})", r.stderr or "")
+            if m:
+                self.log(f"下载文件分辨率：{m.group(1)}x{m.group(2)}（{os.path.basename(path)}）")
+            else:
+                self.log(f"下载文件信息：{os.path.basename(path)}（分辨率未知）")
+        except Exception as e:
+            self.log(f"下载文件探测失败：{e}")
 
     def _head_size(self, url):
         """HEAD 拿 Content-Length；被拦则 GET Range: bytes=0-0 从 Content-Range 取总大小"""
         try:
             import urllib.request
             ref = self._sniff_referer() or ""
+            import ssl
+            ctx = ssl._create_unverified_context()
+            ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             for method, headers, is_range in (
-                ("HEAD", {"User-Agent": "Mozilla/5.0", "Referer": ref}, False),
-                ("GET", {"User-Agent": "Mozilla/5.0", "Referer": ref, "Range": "bytes=0-0"}, True),
+                ("HEAD", {"User-Agent": ua, "Referer": ref}, False),
+                ("GET", {"User-Agent": ua, "Referer": ref, "Range": "bytes=0-0"}, True),
             ):
                 try:
                     req = urllib.request.Request(url, method=method, headers=headers)
-                    with urllib.request.urlopen(req, timeout=10) as r:
+                    with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
                         if is_range:
                             cr = r.headers.get("Content-Range") or ""
                             m = re.search(r"/\s*(\d+)\s*$", cr)
@@ -1648,7 +2977,7 @@ class App:
             pass
         return None
 
-    def _probe_hls(self, url, ph):
+    def _probe_hls(self, url, ph, seq=None):
         try:
             args = [YTDLP, "--ffmpeg-location", FFMPEG, "--no-playlist", "-J", "--no-warnings"]
             args += cookie_args()
@@ -1658,12 +2987,16 @@ class App:
             args.append(url)
             r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", timeout=90, creationflags=NO_WINDOW | 0x00004000)
+            if seq is not None and seq != self._probe_seq:
+                return  # 已被新一轮探测取代，丢弃
             if r.returncode != 0:
                 self.q.put(("hls_fail", ph, (r.stderr or r.stdout or "")[-300:]))
                 return
             info = json.loads(r.stdout)
             self.q.put(("hls_formats", url, ph, extract_formats(info)))
         except Exception as e:
+            if seq is not None and seq != self._probe_seq:
+                return
             self.q.put(("hls_fail", ph, str(e)))
 
     def _show_hls_formats(self, url, ph, fmts):
@@ -1687,7 +3020,7 @@ class App:
                 codec = a.split(".")[0] + "（纯音频）"
             warn = "⚠" if ("av1" in v or "vp9" in v or "vp08" in v or "vp09" in v) else "✓"
             self.fmt_tree.insert("", 0, iid=f"hls_{base}_{i}", values=(
-                f["res"] or "", f["id"], f"{codec} {warn}", fmt_size(f["size"]), "嗅探"))
+                f["res"] or "", f["id"], f"{codec} {warn}", fmt_size(f["size"])))
         self.log(f"HLS 嗅探展开 {len(fmts)} 个清晰度，可直接点选")
 
     def _sniff_referer(self):
@@ -1724,7 +3057,7 @@ class App:
                 codec = a.split(".")[0] + "（纯音频）"
             warn = "⚠" if ("av1" in v or "vp9" in v or "vp08" in v or "vp09" in v) else "✓"
             self.fmt_tree.insert("", "end", iid=str(i), values=(
-                f["res"] or "", f["id"], f"{codec} {warn}", fmt_size(f["size"]), "探测"))
+                f["res"] or "", f["id"], f"{codec} {warn}", fmt_size(f["size"])))
         self.log(f"探测成功：{len(fmts)} 个格式")
 
     def _mouse_on_dl_btn(self, e):
@@ -1771,6 +3104,7 @@ class App:
 
     def _download_fmt_row(self, row):
         self._hide_dl_btn()
+        self._halt_probes()
         if not row:
             return
         try:
@@ -1810,7 +3144,7 @@ class App:
             return
         url = self.url_var.get().strip()
         if not url:
-            messagebox.showwarning("提示", "URL 为空")
+            messagebox.showwarning("提示", "URL 为空", parent=self.root)
             return
         info = getattr(self, "current_info", None) or {}
         t = (info.get("title") or "").strip() or f"{fmt['res'] or fmt['id']} · {fmt['id']}"
@@ -1858,11 +3192,34 @@ class App:
             task = payload
             if task.ui:
                 task.ui.refresh()
-            if task.state == "done" and task.out_path and task.mode:
-                self.cqueue.add(task.out_path, task.mode, task.ui)
-                self.log(f"下载完成，加入压缩队列：{os.path.basename(task.out_path)}（{task.mode}）")
-            elif task.state == "done":
-                self.log(f"下载完成：{os.path.basename(task.out_path)}（未压缩，可到压缩页手动转）")
+            if task.state == "done" and task.out_path:
+                threading.Thread(target=self._probe_done_res, args=(task.out_path,), daemon=True).start()
+                if task.mode:
+                    self.cqueue.add(task.out_path, task.mode, task.ui, autostart=True)
+                    self.log(f"下载完成，加入压缩队列：{os.path.basename(task.out_path)}（{task.mode}）")
+                else:
+                    self.log(f"下载完成：{os.path.basename(task.out_path)}（未压缩，可到压缩页手动转）")
+        elif kind in ("cqueued", "cstarted", "cprogress", "cdone"):
+            rec = payload
+            if rec.get("row") is None:
+                try:
+                    rec["row"] = CompressRow(self._cp_inner, rec, self)
+                except Exception:
+                    pass
+            if rec.get("row"):
+                try:
+                    rec["row"].refresh()
+                except Exception:
+                    pass
+            if kind in ("cqueued", "cstarted", "cdone"):
+                self._reorder_compress_rows()
+                self._relayout_compress_rows()
+            if kind == "cdone":
+                if rec.get("state") == "stopped":
+                    self.log(f"压缩已停止：{os.path.basename(rec['path'])}")
+                else:
+                    tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
+                    self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
 
     # ---------- 服务 ----------
     def _start_capture_server(self):
@@ -1874,7 +3231,53 @@ class App:
         except OSError as e:
             self.log(f"本地接收服务启动失败：{e}")
 
+def _pid_alive(pid):
+    """跨平台进程存活检查"""
+    if os.name == "nt":
+        try:
+            r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                               capture_output=True, text=True, timeout=5,
+                               creationflags=NO_WINDOW | 0x00004000)
+            return str(pid) in r.stdout
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _acquire_single_instance(lock_path):
+    """防多开：锁文件 + PID 存活检查；返回 True=本实例拿到锁"""
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path, "r", encoding="utf-8") as _f:
+                old_pid = int(_f.read().strip() or "0")
+        except (ValueError, OSError):
+            old_pid = 0
+        if old_pid and _pid_alive(old_pid):
+            return False
+    try:
+        with open(lock_path, "w", encoding="utf-8") as _f:
+            _f.write(str(os.getpid()))
+        return True
+    except OSError:
+        return True  # 锁写失败不阻塞启动
+
+
 def main():
+    lock_path = os.path.join(SCRIPT_DIR, "eazyvid.lock")
+    if not _acquire_single_instance(lock_path):
+        try:
+            _r = tk.Tk()
+            _r.withdraw()
+            messagebox.showerror("eazyVid 已在运行",
+                                 "检测到 eazyVid 已在运行中。\n请先关闭现有实例，再启动新的。", parent=_r)
+            _r.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
     root = tk.Tk()
     App(root)
     root.mainloop()
