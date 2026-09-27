@@ -61,20 +61,51 @@ print("3. 下载池 并发限制/暂停让位/恢复 OK", flush=True)
 # 4. 压缩队列：空闲立即压 + 忙时排队
 # mock compress_video：睡 0.2s 表示正在压
 orig = E.compress_video
-def fake_compress(path, mode, log):
+def fake_compress(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
     time.sleep(0.2)
+    if progress_cb:
+        progress_cb(100.0)
     return True, path + "_out.mp4"
 E.compress_video = fake_compress
 cq = E.CompressQueue(print, lambda e: None)
-t0 = time.time()
 cq.add("a.mp4", "x265 默认(推荐)")
 cq.add("b.mp4", "x265 默认(推荐)")
-time.sleep(0.55)
+cq.start()
+t0 = time.time()
+time.sleep(0.9)
 elapsed = time.time() - t0
 # 串行队列：两个 0.2s 任务 ≈ 0.4s+（若并行则 ≈0.2s）
 assert elapsed >= 0.4, elapsed
-assert cq.q.empty()
-print(f"4. 压缩队列 串行排队 OK（两个任务耗时 {elapsed:.2f}s）")
+assert all(t["state"] == "done" for t in cq.tasks), [t["state"] for t in cq.tasks]
+print(f"4. 压缩队列 串行排队+手动开始 OK（两个任务耗时 {elapsed:.2f}s）")
+# 4b. autostart：下载任务入队后，只要有空闲压缩线程就自动开始（无需手动 start）
+# 用并发计数证明两个任务并行（空闲线程被利用），不依赖计时
+_plock = threading.Lock()
+_par_active = 0
+_par_max = 0
+def fake_par(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
+    global _par_active, _par_max
+    with _plock:
+        _par_active += 1
+        _par_max = max(_par_max, _par_active)
+    time.sleep(0.2)
+    with _plock:
+        _par_active -= 1
+    if progress_cb:
+        progress_cb(100.0)
+    return True, path + "_out.mp4"
+_orig_cv = E.compress_video
+E.compress_video = fake_par
+cq2 = E.CompressQueue(print, lambda e: None, max_workers=2)
+cq2.add("c1.mp4", "x265 默认(推荐)", None, autostart=True)
+cq2.add("c2.mp4", "x265 默认(推荐)", None, autostart=True)
+_t0 = time.time()
+while not all(t["state"] == "done" for t in cq2.tasks) and time.time() - _t0 < 3:
+    time.sleep(0.05)
+assert all(t["state"] == "done" for t in cq2.tasks), [t["state"] for t in cq2.tasks]
+assert _par_max >= 2, f"期望并行（有空闲线程即开），实际最大并发 {_par_max}"
+E.compress_video = _orig_cv
+print(f"4b. 下载完成 autostart：有空闲线程即自动开始（最大并发 {_par_max}）OK", flush=True)
 
 # 5. build_dl_cmd：临时目录隔离 + 续传 -c
 # 构造临时假 profile（含空 Cookies），验证 cookie 兜底复制分支，不依赖真实登录态
@@ -96,5 +127,29 @@ assert ".eazyvid_7_" in " ".join(cmd) and ".eazyvid_7_" in tmpdir
 assert cmd[-1] == "http://x/v" and "-c" in cmd
 os.rmdir(tmpdir)
 print("5. build_dl_cmd（临时目录 + cookie + 续传）OK")
+
+# 6. 压缩停止：stopped 状态、remove 允许
+cq6 = E.CompressQueue(print, lambda e: None, max_workers=1)
+fake6 = {"id": 1, "path": r"D:\x.mp4", "mode": "x265 默认(推荐)", "ui_ref": None,
+         "state": "compressing", "progress": 30.0, "out": None, "ok": False,
+         "row": None, "skip": False, "autostart": False, "_ph": {"proc": None}}
+cq6.tasks.append(fake6)
+assert cq6.stop(fake6) is True
+assert fake6["state"] == "stopped"
+assert cq6.remove(fake6) is True
+print("6. 压缩停止 stopped/删除 OK")
+
+# 7. 压缩重启：stopped 任务点「开始压缩」恢复 queued（从头重压）
+cq7 = E.CompressQueue(print, lambda e: None, max_workers=1)
+fake7 = {"id": 1, "path": r"D:\x.mp4", "mode": "x265 默认(推荐)", "ui_ref": None,
+         "state": "stopped", "progress": 30.0, "out": None, "ok": False,
+         "row": None, "skip": False, "autostart": False, "_ph": {"proc": None}}
+cq7.tasks.append(fake7)
+cq7.paused = True
+cq7.start()
+time.sleep(0.05)
+assert fake7["state"] in ("queued", "compressing"), fake7["state"]
+assert fake7["progress"] == 0.0
+print("7. 压缩重启 stopped→queued OK")
 
 print("=== ALL CORE TESTS PASSED ===")
