@@ -57,7 +57,7 @@ print("4. 下载池行 排队/进度/暂停/完成变灰 OK", flush=True)
 
 # 压缩下拉菜单值
 vals = row.mode_cb.cget("values")
-assert vals[0] == "不压缩" and "x265 默认(推荐)" in vals and "NVENC 硬件加速" in vals, vals
+assert vals[0] == "不压缩" and "x265 默认(推荐)" in vals and "x265 小体积" in vals, vals
 print("5. 压缩下拉菜单 OK", flush=True)
 
 # 日志抽屉
@@ -104,7 +104,7 @@ assert len(_row2._cv.find_withtag("bg")) == 0, "stopped 背景层应清空(文�
 os.remove(_fake2)
 print("8. 压缩行 停止按钮/淡蓝底色/无进度条 OK", flush=True)
 
-# 9. 压缩行信息：queued 显示原大小；done 显示 原→后(压缩比)；删除按钮为减号
+# 9. 压缩行信息：queued 显示原大小；done 显示 原→后(压缩比)；删除按钮为垃圾桶图标
 _fake3 = os.path.join(tempfile.gettempdir(), "eazyvid_smoke_e.mp4")
 with open(_fake3, "wb") as f:
     f.write(b"\x00" * (3 * 1024 * 1024))
@@ -113,7 +113,7 @@ root.update()
 _r3 = app.cqueue.tasks[-1]
 _row3 = _r3.get("row")
 assert _row3 is not None
-assert _row3.del_btn.cget("text") == "−", "删除按钮应为减号"
+assert _row3.del_btn.cget("text") == "🗑️", "删除按钮应为垃圾桶 emoji"
 assert "3.0MB" in _row3._cv.itemcget(_row3._txt_size, "text"), _row3._cv.itemcget(_row3._txt_size, "text")
 _fake4 = os.path.join(tempfile.gettempdir(), "eazyvid_smoke_f.mp4")
 with open(_fake4, "wb") as f:
