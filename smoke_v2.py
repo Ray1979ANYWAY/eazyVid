@@ -10,7 +10,7 @@ app = E.App(root)
 root.update()
 
 # 关键控件存在
-for name in ("url_var", "fmt_tree", "pool", "cqueue", "_dl_btn", "_log_btn"):
+for name in ("url_var", "fmt_tree", "pool", "cqueue", "_dl_btn"):
     assert getattr(app, name) is not None, name
 assert app._pool_inner is not None and app._pool_canvas is not None
 print("1. UI 构建 OK", flush=True)
@@ -60,14 +60,6 @@ vals = row.mode_cb.cget("values")
 assert vals[0] == "不压缩" and "x265 默认(推荐)" in vals and "x265 小体积" in vals, vals
 print("5. 压缩下拉菜单 OK", flush=True)
 
-# 日志抽屉
-app._toggle_log(); root.update()
-assert app.log_visible is True
-assert app.log_text.winfo_manager() == "pack"
-app._toggle_log(); root.update()
-assert app.log_visible is False
-print("6. 日志抽屉 OK", flush=True)
-
 # 7. 压缩任务行：cqueued 事件 → 压缩页出现一行（回归：事件必须经 _ui_event_impl 创建行）
 import tempfile
 _fake = os.path.join(tempfile.gettempdir(), "eazyvid_smoke_c.mp4")
@@ -100,7 +92,7 @@ _rec["state"] = "stopped"
 _row2.refresh(); root.update()
 assert _row2._cv.itemcget(_row2._win_stop, "state") == "hidden", "stopped 停止按钮应隐藏"
 assert str(_row2.del_btn.cget("state")) == "normal"
-assert len(_row2._cv.find_withtag("bg")) == 0, "stopped 背景层应清空(文字/控件保留)"
+assert len(_row2._cv.find_withtag("bg")) == 1, "stopped 应有淡橙底色背景层(文字/控件保留)"
 os.remove(_fake2)
 print("8. 压缩行 停止按钮/淡蓝底色/无进度条 OK", flush=True)
 

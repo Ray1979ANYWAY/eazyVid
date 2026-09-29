@@ -61,7 +61,7 @@ print("3. 下载池 并发限制/暂停让位/恢复 OK", flush=True)
 # 4. 压缩队列：空闲立即压 + 忙时排队
 # mock compress_video：睡 0.2s 表示正在压
 orig = E.compress_video
-def fake_compress(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
+def fake_compress(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None, cover_sec=None):
     time.sleep(0.2)
     if progress_cb:
         progress_cb(100.0)
@@ -83,7 +83,7 @@ print(f"4. 压缩队列 串行排队+手动开始 OK（两个任务耗时 {elaps
 _plock = threading.Lock()
 _par_active = 0
 _par_max = 0
-def fake_par(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
+def fake_par(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None, cover_sec=None):
     global _par_active, _par_max
     with _plock:
         _par_active += 1
