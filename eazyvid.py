@@ -1150,7 +1150,43 @@ def _probe_duration(path, log_cb=None):
         pass
     return None
 
-def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, proc_holder=None):
+def _attach_cover(in_path, out_path, sec, log_cb):
+    """从源视频第 sec 秒截帧，作为输出视频封面（attached_pic）。
+    失败时静默保留原输出，绝不影响压缩结果。"""
+    try:
+        ff = os.path.join(SCRIPT_DIR, "ffmpeg.exe")
+        if not os.path.exists(ff):
+            ff = "ffmpeg"
+        jpg = out_path + ".cover.jpg"
+        r1 = subprocess.run([ff, "-y", "-ss", str(sec), "-i", in_path,
+                             "-frames:v", "1", "-q:v", "2", jpg],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            creationflags=NO_WINDOW | 0x00004000, timeout=60)
+        if r1.returncode != 0 or not os.path.exists(jpg):
+            return
+        tmp = out_path + ".covtmp.mp4"
+        r2 = subprocess.run([ff, "-y", "-i", out_path, "-i", jpg,
+                             "-map", "0", "-map", "1", "-c", "copy",
+                             "-disposition:v:1", "attached_pic",
+                             "-metadata:s:v:1", "mimetype=image/jpeg",
+                             "-metadata:s:v:1", "filename=cover.jpg", tmp],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            creationflags=NO_WINDOW | 0x00004000, timeout=120)
+        if r2.returncode == 0 and os.path.exists(tmp):
+            os.replace(tmp, out_path)
+            log_cb(f"已设置封面：源视频第 {sec} 秒")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        try:
+            os.remove(jpg)
+        except OSError:
+            pass
+    except Exception as e:
+        log_cb(f"封面设置失败（不影响压缩结果）：{e}")
+
+def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, proc_holder=None, cover_sec=None):
     """压缩单个视频；返回 (是否成功, 输出路径)。mode_name 必须是 COMPRESS_MODES 的键。
     与 compress.py 对齐：分辨率不变、低码率音频原样复制、10bit 适配。"""
     try:
@@ -1271,14 +1307,19 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                    f"该视频已高度压缩，放弃输出并保留原文件")
             return True, None
         log_cb(f"压缩完成：{out_path}（{_fmt_size(in_sz)}→{_fmt_size(out_sz)}）")
+        if cover_sec is not None:
+            try:
+                _attach_cover(in_path, out_path, cover_sec, log_cb)
+            except Exception as e:
+                log_cb(f"封面设置失败（不影响压缩结果）：{e}")
         return True, out_path
     except Exception as e:
         log_cb(f"压缩异常：{e}")
         return False, None
-def _safe_compress_video(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None):
+def _safe_compress_video(path, mode, log, progress_cb=None, out_dir=None, proc_holder=None, cover_sec=None):
     """压缩包装：任何异常都不让 worker 线程崩溃，返回 (False, None)"""
     try:
-        return compress_video(path, mode, log, progress_cb, out_dir, proc_holder)
+        return compress_video(path, mode, log, progress_cb, out_dir, proc_holder, cover_sec)
     except Exception as e:
         try:
             log(f"压缩异常：{e}")
@@ -1292,6 +1333,9 @@ class CompressQueue:
         self.on_event = on_event
         self.busy = False
         self.out_dir = None      # 压缩输出目录（None=与源文件同目录；设置页可改）
+        self.overwrite = False   # 压缩成功后直接覆盖原文件（设置页开启，谨慎）
+        self.cover_enabled = False  # 以第 N 秒末为封面（设置页开启）
+        self.cover_second = 5
         self.tasks = []          # 压缩任务记录（压缩页展示；列表顺序即压缩优先级）
         self._seq = 0
         self.paused = True       # 手动开始：add 只排队，点「开始压缩」才启动 worker
@@ -1457,7 +1501,12 @@ class CompressQueue:
             prog._samples = []
 
             rec["_ph"] = {}
-            ok, out = _safe_compress_video(rec["path"], rec["mode"], self.log, prog, self.out_dir, rec["_ph"])
+            try:
+                rec["orig_size"] = os.path.getsize(rec["path"])
+            except OSError:
+                rec["orig_size"] = 0
+            cover_sec = self.cover_second if self.cover_enabled else None
+            ok, out = _safe_compress_video(rec["path"], rec["mode"], self.log, prog, self.out_dir, rec["_ph"], cover_sec)
             if rec.get("state") != "stopped":
                 if ok and out:
                     rec["state"] = "done"
@@ -1467,6 +1516,13 @@ class CompressQueue:
                     rec["state"] = "failed"
             if ok and out:
                 rec["out"] = out
+                if self.overwrite and rec.get("state") == "done":
+                    try:
+                        os.replace(out, rec["path"])   # 覆盖原文件
+                        rec["out"] = rec["path"]
+                        self.log(f"已覆盖原文件：{os.path.basename(rec['path'])}")
+                    except OSError:
+                        pass
             rec["ok"] = ok
             if rec.get("ui_ref"):
                 try:
@@ -1582,12 +1638,16 @@ class TaskRow:
     def __init__(self, parent, task, app):
         self.task = task
         self.app = app
-        self.frame = ttk.Frame(parent)
+        self.selected = False
+        self.frame = tk.Frame(parent, bg="#F0F0F0")
         self.frame.pack(fill="x", padx=4, pady=2)
         self.name = ttk.Label(self.frame, text=task.title, width=38, anchor="w")
         self.name.pack(side="left")
         self.name.bind("<Double-1>", self._on_name_double)
-        self.name.bind("<Button-3>", self._on_name_right)
+        # 多选/右键：整行统一处理（点击子控件无 Button-1 绑定会传播到 frame）
+        self.frame.bind("<Button-1>", self._on_press_sel)
+        self.frame.bind("<B1-Motion>", self._on_drag_sel)
+        self.frame.bind("<Button-3>", self._on_row_right)
         # 悬停显示完整文件名（Label 视觉裁剪不影响看全名）
         self._tip = None
         self.name.bind("<Enter>", self._on_name_tip_show)
@@ -1616,6 +1676,31 @@ class TaskRow:
         self.speed_lbl.pack(side="right")
         self.state_lbl.pack(side="right")
         bind_tooltip(self.del_btn, "删除", self.app.root)
+
+    def _on_press_sel(self, e):
+        self.app._pool_press(self, e)
+
+    def _on_drag_sel(self, e):
+        self.app._pool_drag(self, e)
+
+    def set_selected(self, v):
+        if self.selected == v:
+            return
+        self.selected = v
+        bg = ROW_SEL if v else "#F0F0F0"
+        try:
+            self.frame.configure(bg=bg)
+        except Exception:
+            pass
+        for w in (self.name, self.pct, self.state_lbl, self.speed_lbl):
+            try:
+                w.configure(background=bg)
+            except Exception:
+                pass
+        try:
+            self.bar.configure(bg=bg)
+        except Exception:
+            pass
 
     def _on_name_tip_show(self, _e=None):
         try:
@@ -1652,27 +1737,47 @@ class TaskRow:
             else:
                 _os_reveal(p)
 
-    def _on_name_right(self, e):
-        """右键：已完成的打开或打开所在文件夹；未完成的打开所在文件夹（定位 part 文件）"""
-        m = tk.Menu(self.frame, tearoff=0)
-        p = self._name_path()
-        if self.task.state == "done" and os.path.exists(p):
-            m.add_command(label="打开", command=lambda: _os_open(p))
-            m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(p))
-        else:
-            tp = getattr(self.task, "tmpdir", None)
-            part = None
-            if tp and os.path.isdir(tp):
-                for f in os.listdir(tp):
-                    if f.endswith(".part"):
-                        part = os.path.join(tp, f)
-                        break
-            m.add_command(label="打开所在文件夹",
-                          command=lambda: _os_reveal(part or tp or os.path.dirname(p)))
+    def _on_row_right(self, e):
+        """右键：多选→批量移出（运行中除外）；单选→打开/打开所在文件夹 + 移出队列"""
+        m = None
         try:
+            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行 ----
+            if not self.selected:
+                self.app._pool_clear_sel()
+                self.set_selected(True)
+            sel = self.app._pool_rows_sel()
+            if len(sel) > 1:
+                m = tk.Menu(self.frame, tearoff=0)
+                m.add_command(label=f"移出队列（{len(sel)} 项，运行中除外）",
+                              command=lambda: self.app._pool_batch_remove(sel))
+                m.tk_popup(e.x_root, e.y_root)
+                return
+            m = tk.Menu(self.frame, tearoff=0)
+            p = self._name_path()
+            if self.task.state == "done" and os.path.exists(p):
+                m.add_command(label="打开", command=lambda: _os_open(p))
+                m.add_command(label="打开所在文件夹", command=lambda: _os_reveal(p))
+            else:
+                tp = getattr(self.task, "tmpdir", None)
+                part = None
+                if tp and os.path.isdir(tp):
+                    for f in os.listdir(tp):
+                        if f.endswith(".part"):
+                            part = os.path.join(tp, f)
+                            break
+                m.add_command(label="打开所在文件夹",
+                              command=lambda: _os_reveal(part or tp or os.path.dirname(p)))
+            m.add_separator()
+            m.add_command(label="移出队列", command=lambda: self.app._pool_remove_one(self))
             m.tk_popup(e.x_root, e.y_root)
+        except Exception:
+            pass
         finally:
-            m.grab_release()
+            if m is not None:
+                try:
+                    m.grab_release()
+                except Exception:
+                    pass
 
 
     def _on_pause(self):
@@ -1690,15 +1795,41 @@ class TaskRow:
                     parent=self.app.root):
                 return
         elif st == "done" and self.task.out_path and os.path.exists(self.task.out_path):
-            if messagebox.askyesno("删除任务",
-                    f"是否同时删除已下载的文件？\n\n{os.path.basename(self.task.out_path)}\n\n是 = 连文件一起删除\n否 = 仅从列表移除",
-                    parent=self.app.root):
+            # 完成态：两行菜单贴在垃圾桶按钮正下方（不用是和否弹窗）
+            m = tk.Menu(self.app.root, tearoff=0)
+            m.add_command(label="仅移出列表", command=lambda: self._del_done(False))
+            m.add_command(label="移出列表并删除文件", command=lambda: self._del_done(True))
+            try:
+                m.tk_popup(self.del_btn.winfo_rootx(),
+                           self.del_btn.winfo_rooty() + self.del_btn.winfo_height())
+            finally:
                 try:
-                    os.remove(self.task.out_path)
-                    self.app.log(f"已删除文件：{os.path.basename(self.task.out_path)}")
-                except OSError as e:
-                    self.app.log(f"删除文件失败：{e}")
+                    m.grab_release()
+                except Exception:
+                    pass
+            return
         self.task.pool.remove(self.task)
+        self.app._update_pool_scrollregion()
+        try:
+            self.app._pool_canvas.yview_moveto(0)
+        except Exception:
+            pass
+        self.app.log(f"已删除任务：{self.task.title}")
+
+    def _del_done(self, with_file):
+        """完成态删除：with_file=True 连文件一起删；False 仅移出列表"""
+        if with_file and self.task.out_path:
+            try:
+                os.remove(self.task.out_path)
+                self.app.log(f"已删除文件：{os.path.basename(self.task.out_path)}")
+            except OSError as e:
+                self.app.log(f"删除文件失败：{e}")
+        self.task.pool.remove(self.task)
+        self.app._update_pool_scrollregion()
+        try:
+            self.app._pool_canvas.yview_moveto(0)
+        except Exception:
+            pass
         self.app.log(f"已删除任务：{self.task.title}")
     def _on_mode(self, _e=None):
         v = self.mode_cb.get()
@@ -1841,9 +1972,9 @@ def bind_tooltip(widget, text, root):
     return _hide
 
 class ToggleSwitch:
-    """自绘开关：内部持有 Canvas（不继承 widget，避开 tkinter 子类命名问题）
-    圆角轨道 + 白色滑块，点击切换；set_on 供外部复位"""
-    def __init__(self, parent, on_toggle=None, w=46, h=24):
+    """自绘方形开关：内部持有 Canvas（不继承 widget，避开 tkinter 子类命名问题）
+    方形轨道 + 方形滑块，点击切换；set_on 供外部复位；set_enabled 供外部禁用（灰色）"""
+    def __init__(self, parent, on_toggle=None, w=40, h=20):
         try:
             _bg = ttk.Style().lookup("TFrame", "background")
         except Exception:
@@ -1851,29 +1982,43 @@ class ToggleSwitch:
         self._cv = tk.Canvas(parent, width=w, height=h, highlightthickness=0, bd=0, bg=_bg)
         self._w, self._h = w, h
         self._on = False
+        self._enabled = True
         self._on_toggle = on_toggle
         self._cv.bind("<Button-1>", self._on_click)
         self._draw()
     def _draw(self):
         cv = self._cv
         cv.delete("all")
-        r = self._h / 2
-        col = "#3b82f6" if self._on else "#c9ccd6"
-        cv.create_oval(0, 0, self._h, self._h, fill=col, outline="")
-        cv.create_oval(self._w - self._h, 0, self._w, self._h, fill=col, outline="")
-        cv.create_rectangle(r, 0, self._w - r, self._h, fill=col, outline="")
+        if not self._enabled:
+            col, slid = "#e2e4ea", "#f6f6f6"      # 禁用：轨道浅灰 + 滑块近白
+        else:
+            col = "#3b82f6" if self._on else "#c9ccd6"
+            slid = "#ffffff"
+        # 方形轨道（无圆角，避免锯齿/毛刺）
+        cv.create_rectangle(0, 0, self._w, self._h, fill=col, outline="")
+        # 方形滑块
         sx = self._w - self._h + 2 if self._on else 2
-        cv.create_oval(sx, 2, sx + self._h - 4, self._h - 2, fill="#ffffff", outline="")
+        cv.create_rectangle(sx, 2, sx + self._h - 4, self._h - 2, fill=slid, outline="")
     def _on_click(self, _e):
+        if not self._enabled:
+            return
         self._on = not self._on
         self._draw()
         if self._on_toggle:
             self._on_toggle(self._on)
+    def set_enabled(self, en):
+        """禁用：灰色外观 + 点击不响应"""
+        self._enabled = bool(en)
+        self._draw()
     def set_on(self, on):
         self._on = on
         self._draw()
     def pack(self, **kw):
         self._cv.pack(**kw)
+    def grid(self, **kw):
+        self._cv.grid(**kw)
+    def place(self, **kw):
+        self._cv.place(**kw)
 
 def _fmt_eta(secs):
     """预计剩余时间显示：-- / 约N秒 / 约N分 / 约N时M分"""
@@ -1918,6 +2063,9 @@ def _fmt_size(n):
 
 ROW_BG = "#F0F0F0"          # 压缩行默认底色
 ROW_BG_ACTIVE = "#D9E9F8"   # 压缩中行底色（30% 透明度淡蓝效果）
+ROW_BG_DONE = "#E4E0FA"     # 完成态：薰衣草紫（30% 透明度效果）
+ROW_BG_END = "#FBEDD8"      # 失败/终止/收益小：淡橙（30% 透明度效果）
+ROW_SEL = "#C9C9C9"          # 选中行：比灰底深一点
 
 class CompressRow:
     """压缩页中的一行压缩任务（未压缩的可拖动调整优先级）"""
@@ -1953,7 +2101,10 @@ class CompressRow:
         self._win_restart = self._cv.create_window(0, 15, window=self.restart_btn, anchor="e")
         self._win_del = self._cv.create_window(0, 15, window=self.del_btn, anchor="e")
         self._win_mode = self._cv.create_window(0, 15, window=self.mode_cb, anchor="e")
-        self.pin_btn = ttk.Button(self.frame, text="⬆", width=2, command=self._on_pin)
+        self.pin_btn = tk.Button(self.frame, text="▲", width=2,
+                                font=("Microsoft YaHei", 11, "bold"),
+                                relief="flat", bd=0, highlightthickness=0,
+                                command=self._on_pin, cursor="hand2")
         self._win_pin = self._cv.create_window(0, 15, window=self.pin_btn, anchor="e")
         self._pin_shown = False
         self._stop_shown = False
@@ -1970,8 +2121,11 @@ class CompressRow:
         # 拖动（命中整行）
         # 拖拽重排已移除（2026-09-28）：压缩队列不再支持手动拖拽调序
         # 文件名：双击打开视频；右键打开/打开所在文件夹（执行态仅打开文件夹）
+        self.selected = False
         self._cv.bind("<Double-1>", self._on_dbl)
         self._cv.bind("<Button-3>", self._on_rclick)
+        self._cv.bind("<Button-1>", self._on_press_sel)
+        self._cv.bind("<B1-Motion>", self._on_drag_sel)
         # 悬停文件名区域：tooltip 显示完整文件名（视觉裁剪不影响看全名）
         self._tip = None
         self._tip_text = ""
@@ -2057,6 +2211,21 @@ class CompressRow:
         except Exception:
             pass
 
+    def _on_press_sel(self, e):
+        self.app._cp_press(self, e)
+
+    def _on_drag_sel(self, e):
+        self.app._cp_drag(self, e)
+
+    def set_selected(self, v):
+        if self.selected == v:
+            return
+        self.selected = v
+        try:
+            self.refresh()   # refresh → _paint_cv 重画选中底色
+        except Exception:
+            pass
+
     def _on_dbl(self, e):
         """双击文件名：结束态打开视频文件；执行态无动作"""
         try:
@@ -2071,28 +2240,37 @@ class CompressRow:
             pass
 
     def _on_rclick(self, e):
-        """右键文件名：结束态=打开文件(压缩输出)/打开输出目录；压缩中/排队=仅打开输出目录"""
+        """右键：多选→批量移出；单选→打开文件/输出目录 + 移出队列（压缩中只能先终止）"""
         m = None
         try:
-            if not self._hit_name(e):
-                return
             r = self.rec
             st = r.get("state")
-            out = r.get("out")                                   # 压缩输出文件路径
+            out = r.get("out")
             out_dir = self.app.cqueue.out_dir or os.path.dirname(r["path"]) or "."
+            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行 ----
+            if not self.selected:
+                self.app._cp_clear_sel()
+                self.set_selected(True)
+            sel = self.app._cp_rows_sel()
+            if len(sel) > 1:
+                m = tk.Menu(self.frame, tearoff=0)
+                m.add_command(label=f"移出队列（{len(sel)} 项，运行中除外）",
+                              command=lambda: self.app._cp_batch_remove(sel))
+                m.tk_popup(e.x_root, e.y_root)
+                return
             m = tk.Menu(self.frame, tearoff=0)
             if st in ("done", "stopped", "failed"):
                 if out and os.path.exists(out):
                     m.add_command(label="打开文件", command=lambda: _os_open(out))
                     m.add_command(label="打开输出目录", command=lambda: _os_reveal(out))
                 else:
-                    # 输出不存在（终止/失败无产物）：仅打开输出目录本身
                     m.add_command(label="打开输出目录", command=lambda: _os_reveal(out_dir))
             else:
                 # 压缩中 / 排队：仅打开输出目录
                 m.add_command(label="打开输出目录", command=lambda: _os_reveal(out_dir))
-            if m.index("end") is not None:
-                m.tk_popup(e.x_root, e.y_root)
+            m.add_separator()
+            m.add_command(label="移出队列", command=lambda: self.app._cp_remove_one(self))
+            m.tk_popup(e.x_root, e.y_root)
         except Exception:
             pass
         finally:
@@ -2176,7 +2354,8 @@ class CompressRow:
             pass
 
     def _paint_cv(self):
-        """画视觉进度：灰底铺满整行 + 淡蓝从左到右填充（100% 覆盖到按钮组左缘，不覆盖按钮）"""
+        """状态底色：完成=薰衣草紫；失败/终止/收益小=淡橙；压缩中=灰底+淡蓝进度；排队=灰底
+        压缩中 100% = 淡蓝矩形到终止按钮左缘；状态底色铺满整行"""
         s = self.rec.get("state")
         try:
             h = self.frame.winfo_height()
@@ -2185,19 +2364,26 @@ class CompressRow:
         except Exception:
             h = 60
         self._cv.delete("bg")
-        if s != "compressing":
-            return
         try:
-            # 100% = 淡蓝矩形覆盖到终止按钮左缘（压缩中的任务），不覆盖任何按钮
-            right = self.stop_btn.winfo_x()
+            # 压缩中 100% 锚点 = 终止按钮左缘；其他状态铺满整行
+            right = self.stop_btn.winfo_x() if s == "compressing" else self._cv.winfo_width()
         except Exception:
             right = 0
         if right <= 0:
             right = max(self._cv.winfo_width(), 200)
-        p = min(max((self.rec.get("progress") or 0) / 100.0, 0), 1.0)
-        self._cv.create_rectangle(0, 0, right, h, fill=ROW_BG, outline="", tags="bg")
-        if p > 0:
-            self._cv.create_rectangle(0, 0, max(1, int(right * p)), h, fill=ROW_BG_ACTIVE, outline="", tags="bg")
+        if self.selected and s != "compressing":
+            base = ROW_SEL
+        elif s == "done":
+            base = ROW_BG_DONE
+        elif s in ("failed", "stopped", "skipped"):
+            base = ROW_BG_END
+        else:
+            base = ROW_BG
+        self._cv.create_rectangle(0, 0, right, h, fill=base, outline="", tags="bg")
+        if s == "compressing":
+            p = min(max((self.rec.get("progress") or 0) / 100.0, 0), 1.0)
+            if p > 0:
+                self._cv.create_rectangle(0, 0, max(1, int(right * p)), h, fill=ROW_BG_ACTIVE, outline="", tags="bg")
         self._cv.tag_lower("bg")   # 底色永远在最底层
         self._cv.tag_lower("bg")   # 背景矩形垫到最底层，避免盖住文字/控件（此前压缩开始后文件名被盖成空白）
 
@@ -2228,10 +2414,12 @@ class CompressRow:
                 out_size = os.path.getsize(r["out"])
             except Exception:
                 out_size = 0
-            if in_size > 0 and out_size > 0:
-                size_txt = f"{_fmt_size(in_size)} → {_fmt_size(out_size)} ({out_size / in_size * 100:.0f}%)"
+            # 覆盖模式下原文件已被替换：用压缩前记录的大小计算压缩比
+            in_ref = r.get("orig_size") or in_size
+            if in_ref > 0 and out_size > 0:
+                size_txt = f"{_fmt_size(in_ref)} → {_fmt_size(out_size)} ({out_size / in_ref * 100:.0f}%)"
             else:
-                size_txt = f"{_fmt_size(in_size)} → {_fmt_size(out_size)}"
+                size_txt = f"{_fmt_size(in_ref)} → {_fmt_size(out_size)}"
             el = _fmt_elapsed(r.get("elapsed"))
             if el:
                 size_txt += f" · {el}"
@@ -2325,6 +2513,15 @@ class CompressRow:
                 self.frame.destroy()
                 self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
         self.app._relayout_compress_rows()   # place 布局不自动补位，删除后必须重排
+        # 删除后视口回顶：scrollregion 缩短但 yview 停在旧位置会留下顶部空白
+        try:
+            self.app._cp_canvas.yview_moveto(0)
+        except Exception:
+            pass
+        try:
+            self.app._diag_cp("行垃圾桶")
+        except Exception:
+            pass
 class App:
     def __init__(self, root):
         self.root = root
@@ -2349,7 +2546,12 @@ class App:
         self._hover_row = None
         self._probe_seq = 0   # 探测任务版本号：再次点击即作废上一轮
         self._dl_btn = None
-        self.log_visible = False
+        self._pool_sel = set()   # 下载池选中的 TaskRow
+        self._cp_sel = set()     # 压缩池选中的 CompressRow
+        self._pool_anchor = None
+        self._cp_anchor = None
+        self._pool_drag_row = None
+        self._cp_drag_row = None
         self.pool = DownloadPool(lambda ev: self.q.put(("ui", ev)), self.log)
         self.cqueue = CompressQueue(self.log, self._ui_event)
         self._load_compress_settings()
@@ -2475,6 +2677,9 @@ class App:
             self.cqueue._start_workers()
             self._compress_mode = _cfg.get("compress_mode", "same")
             self._compress_dir = _cfg.get("compress_dir", "")
+            self._overwrite = bool(_cfg.get("overwrite", False))
+            self._cover_enabled = bool(_cfg.get("cover_enabled", False))
+            self._cover_second = max(0, int(_cfg.get("cover_second", 5)))   # 0 = 第一帧
         except Exception:
             pass
         if self._compress_mode == "custom" and self._compress_dir and os.path.isdir(self._compress_dir):
@@ -2484,6 +2689,9 @@ class App:
                 self._compress_mode = "same"
                 self._compress_dir = ""
             self.cqueue.out_dir = None
+        self.cqueue.overwrite = bool(getattr(self, "_overwrite", False))
+        self.cqueue.cover_enabled = bool(getattr(self, "_cover_enabled", False))
+        self.cqueue.cover_second = max(0, int(getattr(self, "_cover_second", 5)))
 
     def _save_compress_settings(self):
         """保存压缩输出设置"""
@@ -2496,6 +2704,9 @@ class App:
             _cfg["compress_mode"] = self._compress_mode
             _cfg["compress_dir"] = self._compress_dir
             _cfg["max_workers"] = getattr(self, "_max_workers", 1)
+            _cfg["overwrite"] = bool(getattr(self, "_overwrite", False))
+            _cfg["cover_enabled"] = bool(getattr(self, "_cover_enabled", False))
+            _cfg["cover_second"] = max(0, int(getattr(self, "_cover_second", 5)))
             with open(SETTINGS_FILE, "w", encoding="utf-8") as _f:
                 json.dump(_cfg, _f, ensure_ascii=False)
         except Exception:
@@ -2575,8 +2786,10 @@ class App:
         self.url_entry.bind("<Return>", lambda _e: self.on_probe())   # 粘贴完直接回车探测
         ttk.Button(top, text="粘贴", width=4, command=lambda: self._paste_url_extract()).pack(side="left", padx=2)
         ttk.Button(top, text="探测格式", command=self.on_probe).pack(side="left", padx=2)
-        self._probe_bar = ttk.Progressbar(top, mode="indeterminate", length=120)
+        self.root.bind_all("<Button-1>", self._on_any_click)
+        self._probe_bar = ttk.Progressbar(top, mode="indeterminate", length=120, cursor="hand2")
         self._probe_bar.pack_forget()
+        bind_tooltip(self._probe_bar, "点击取消当前探测", self.root)
 
         frm = ttk.LabelFrame(self._dl_page, text="格式列表（鼠标移到行上点「下载」；⚠=AV1/VP9 部分播放器不支持）")
         frm.pack(fill="both", expand=True, **pad)
@@ -2586,7 +2799,10 @@ class App:
                           "size": ("大小", 66)}.items():
             self.fmt_tree.heading(k, text=t)
             self.fmt_tree.column(k, width=w, anchor="w")
-        self.fmt_tree.pack(fill="both", expand=True)
+        self._fmt_sb = ttk.Scrollbar(frm, orient="vertical", command=self.fmt_tree.yview)
+        self.fmt_tree.configure(yscrollcommand=self._fmt_sb.set)
+        self.fmt_tree.pack(side="left", fill="both", expand=True)
+        self._fmt_sb.pack(side="right", fill="y")
         self.fmt_tree.bind("<Motion>", self._on_tree_motion)
         self.fmt_tree.bind("<Leave>", lambda e: self._hide_dl_btn())
         self.fmt_tree.bind("<Button-1>", self._on_tree_click)
@@ -2598,9 +2814,10 @@ class App:
         pf.pack(fill="both", expand=True, **pad)
         self._pool_canvas = tk.Canvas(pf, height=190)
         sb = ttk.Scrollbar(pf, orient="vertical", command=self._pool_canvas.yview)
+        self._pool_canvas.configure(yscrollcommand=sb.set)
         self._pool_inner = ttk.Frame(self._pool_canvas)
         self._pool_win = self._pool_canvas.create_window((0, 0), window=self._pool_inner, anchor="nw")
-        self._pool_inner.bind("<Configure>", lambda e: self._pool_canvas.configure(scrollregion=self._pool_canvas.bbox("all")))
+        self._pool_inner.bind("<Configure>", self._on_pool_inner_cfg)
         self._pool_canvas.bind("<Configure>", lambda e: self._pool_canvas.itemconfigure(self._pool_win, width=e.width))
         self._pool_canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -2615,11 +2832,13 @@ class App:
         ttk.Combobox(cptop, textvariable=self.compress_mode_var, state="readonly",
                      values=list(COMPRESS_MODES.keys()), width=16).pack(side="left", padx=6)
         ttk.Button(cptop, text="开始压缩", command=self._cq_start).pack(side="left", padx=6)
+        ttk.Button(cptop, text="清空已完成/终止", command=self._clear_finished).pack(side="right", padx=6)
         ttk.Label(cptop, text="（下载完成的按原选择，手动添加的用此默认模式）", foreground="#888").pack(side="left", padx=6)
         cpf = ttk.LabelFrame(self._cp_page, text="压缩任务")
         cpf.pack(fill="both", expand=True, **pad)
         self._cp_canvas = tk.Canvas(cpf, height=300)
         sb2 = ttk.Scrollbar(cpf, orient="vertical", command=self._cp_canvas.yview)
+        self._cp_canvas.configure(yscrollcommand=sb2.set)
         self._cp_inner = ttk.Frame(self._cp_canvas)
         if _HAVE_DND:
             try:
@@ -2630,7 +2849,7 @@ class App:
             except Exception:
                 pass
         self._cp_win = self._cp_canvas.create_window((0, 0), window=self._cp_inner, anchor="nw")
-        self._cp_inner.bind("<Configure>", lambda e: self._cp_canvas.configure(scrollregion=self._cp_canvas.bbox("all")))
+        self._cp_inner.bind("<Configure>", self._on_cp_inner_cfg)
         self._cp_canvas.bind("<Configure>", lambda e: self._cp_canvas.itemconfigure(self._cp_win, width=e.width))
         self._cp_canvas.pack(side="left", fill="both", expand=True)
         sb2.pack(side="right", fill="y")
@@ -2644,8 +2863,11 @@ class App:
         # ---- 底部固定：日志 ----
         self._bottom_bar = ttk.Frame(self.root)
         self._bottom_bar.pack(fill="x", **pad)
-        self._log_btn = ttk.Button(self._bottom_bar, text="▸ 日志（调试）", command=self._toggle_log)
-        self._log_btn.pack(anchor="w")
+        # 全局鼠标滚轮：滚动当前页面列表
+        try:
+            self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+        except Exception:
+            pass
         # 右下角：所有任务结束后关机开关
         self._shutdown_after = False
         self._shutdown_fired = False
@@ -2656,7 +2878,6 @@ class App:
                                              w=34, h=18)
         self._shutdown_lbl.pack(side="right", padx=(6, 4))
         self._shutdown_toggle.pack(side="right", padx=(0, 8))
-        self.log_text = tk.Text(self._bottom_bar, height=7, state="disabled", wrap="word")
         self.logfile = os.path.join(SCRIPT_DIR, "eazyvid.log")
         try:
             with open(self.logfile, "a", encoding="utf-8") as _lf:
@@ -2664,6 +2885,26 @@ class App:
         except Exception:
             pass
         self.log("就绪：粘贴视频地址 → 解析；失败会引导你播放视频页。")
+
+    def _on_pool_inner_cfg(self, e):
+        """下载池 inner 尺寸变化：刷新 scrollregion；内容≤视口时强制回顶。
+        Tk 在内容从>一页删到≤视口时会把视口留在负区/底部残留，yview() 仍报 (0,1)，
+        表现为"顶部空白"——此回调是根治点。"""
+        try:
+            self._pool_canvas.configure(scrollregion=self._pool_canvas.bbox("all"))
+            if self._pool_inner.winfo_reqheight() <= self._pool_canvas.winfo_height():
+                self._pool_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    def _on_cp_inner_cfg(self, e):
+        """压缩池 inner 尺寸变化：同 _on_pool_inner_cfg（删任务留空的根治点）"""
+        try:
+            self._cp_canvas.configure(scrollregion=self._cp_canvas.bbox("all"))
+            if self._cp_inner.winfo_reqheight() <= self._cp_canvas.winfo_height():
+                self._cp_canvas.yview_moveto(0)
+        except Exception:
+            pass
 
     def _show_page(self, name):
         """切换下载页/压缩页（top bar 与 bottom 不动）"""
@@ -2730,37 +2971,106 @@ class App:
             win.geometry(f"{w}x{h}")
 
     def _open_settings(self):
-        """设置弹窗：下载目录 + 压缩输出目录（后续功能在此逐项增加）"""
+        """设置弹窗：下载目录 + 压缩输出目录（方形 toggle 互斥）+ 覆盖原文件 + 封面秒数 + 并发数"""
+        try:
+            self._build_settings_window()
+        except Exception:
+            import traceback
+            self.log("设置弹窗构建失败：\n" + traceback.format_exc())
+
+    def _build_settings_window(self):
+        """实际构建设置弹窗（与 _open_settings 分离：异常可捕获并写日志定位）"""
         win = tk.Toplevel(self.root)
         win.title("设置")
-        self._center_window(win, 560, 260)
+        self._center_window(win, 620, 420)
         win.transient(self.root)
         win.grab_set()
-        wp = {"padx": 8, "pady": 5}
+        wp = {"padx": 8, "pady": 4}
 
         ttk.Label(win, text="视频下载目录:").grid(row=0, column=0, sticky="w", **wp)
         dl_var = tk.StringVar(value=self.dl_dir_var.get())
-        ttk.Entry(win, textvariable=dl_var, width=44).grid(row=0, column=1, sticky="we", **wp)
+        ttk.Entry(win, textvariable=dl_var, width=40).grid(row=0, column=1, sticky="we", **wp)
         ttk.Button(win, text="浏览…", width=6,
                    command=lambda: self._settings_pick_dir(dl_var)).grid(row=0, column=2, **wp)
 
-        ttk.Separator(win).grid(row=1, column=0, columnspan=3, sticky="we", pady=6)
+        ttk.Separator(win).grid(row=1, column=0, columnspan=3, sticky="we", pady=5)
 
+        # ---- 压缩输出目录：两个方形 toggle 互斥（只能开一个）----
         ttk.Label(win, text="压缩输出目录:").grid(row=2, column=0, sticky="w", **wp)
+        mf = ttk.Frame(win)
+        mf.grid(row=2, column=1, columnspan=2, sticky="w", **wp)
         cmode = tk.StringVar(value=self._compress_mode)
         cdir_var = tk.StringVar(value=self._compress_dir)
-        ttk.Radiobutton(win, text="与源文件同目录（默认）", value="same", variable=cmode).grid(row=2, column=1, sticky="w", **wp)
-        ttk.Radiobutton(win, text="指定目录", value="custom", variable=cmode).grid(row=3, column=1, sticky="w", **wp)
-        cdir_entry = ttk.Entry(win, textvariable=cdir_var, width=44)
-        cdir_entry.grid(row=4, column=1, sticky="we", **wp)
+
+        def mode_tg_other(tg_on, val, other_tg):
+            if tg_on:
+                other_tg.set_on(False)
+                cmode.set(val)
+            elif cmode.get() == val:
+                cmode.set("same")   # 当前项被关掉 → 回落到"同目录"
+
+        same_tg = ToggleSwitch(mf, on_toggle=lambda on: mode_tg_other(on, "same", custom_tg), w=40, h=20)
+        same_tg.pack(side="left", padx=(0, 4))
+        ttk.Label(mf, text="与源文件同目录（默认）").pack(side="left", padx=(0, 14))
+        custom_tg = ToggleSwitch(mf, on_toggle=lambda on: mode_tg_other(on, "custom", same_tg), w=40, h=20)
+        custom_tg.pack(side="left", padx=(0, 4))
+        ttk.Label(mf, text="指定目录").pack(side="left")
+
+        cdir_entry = ttk.Entry(win, textvariable=cdir_var, width=40)
+        cdir_entry.grid(row=3, column=1, sticky="we", **wp)
         ttk.Button(win, text="浏览…", width=6,
-                   command=lambda: self._settings_pick_dir(cdir_var, cmode)).grid(row=4, column=2, **wp)
+                   command=lambda: self._settings_pick_dir(cdir_var, cmode, custom_tg, same_tg)).grid(row=3, column=2, **wp)
 
         def on_mode_change(*_):
-            st = "normal" if cmode.get() == "custom" else "disabled"
-            cdir_entry.config(state=st)
+            cdir_entry.config(state="normal" if cmode.get() == "custom" else "disabled")
         cmode.trace_add("write", on_mode_change)
+        same_tg.set_on(cmode.get() != "custom")
+        custom_tg.set_on(cmode.get() == "custom")
         on_mode_change()
+
+        ttk.Separator(win).grid(row=4, column=0, columnspan=3, sticky="we", pady=5)
+
+        # ---- 压缩后直接覆盖原文件（谨慎）：toggle+文案同 Frame 紧挨，Frame 与上方同列（col1）----
+        of = ttk.Frame(win)
+        of.grid(row=5, column=1, sticky="w", **wp)
+        overwrite_tg = ToggleSwitch(of, w=40, h=20,
+                                    on_toggle=lambda on: self._show_overwrite_tip(win, overwrite_tg) if on else None)
+        overwrite_tg.pack(side="left")
+        overwrite_tg.set_on(bool(getattr(self, "_overwrite", False)))
+        ttk.Label(of, text="压缩后覆盖原文件").pack(side="left", padx=(6, 0))
+
+        # 覆盖 toggle 与输出目录联动：仅"与源文件同目录"模式下可操作；指定目录时灰色禁用
+        def _update_overwrite_state(*_):
+            en = cmode.get() != "custom"
+            overwrite_tg.set_enabled(en)
+            if not en and overwrite_tg._on:
+                overwrite_tg.set_on(False)   # 指定目录下覆盖无意义，强制关闭
+        cmode.trace_add("write", _update_overwrite_state)
+        _update_overwrite_state()
+
+        # ---- 以第 N 秒末帧为封面：toggle 与文案同 Frame 紧挨，数字框嵌在"第""秒末帧"之间 ----
+        cf = ttk.Frame(win)
+        cf.grid(row=7, column=1, sticky="w", **wp)
+        cover_tg = ToggleSwitch(cf, w=40, h=20)
+        cover_tg.pack(side="left")
+        cover_tg.set_on(bool(getattr(self, "_cover_enabled", False)))
+        ttk.Label(cf, text="以第").pack(side="left", padx=(6, 0))
+        cover_sec_var = tk.StringVar(value=str(max(0, int(getattr(self, "_cover_second", 5)))))
+        cover_spin = ttk.Spinbox(cf, textvariable=cover_sec_var, width=7, from_=0, to=999999, increment=1, wrap=False)
+        cover_spin.pack(side="left", padx=4)
+        # 验证只在失焦时做：key 验证会干扰箭头按钮（导致"下箭头调不到零"）
+        cover_spin.configure(validate="focusout",
+                             validatecommand=(win.register(lambda pv: pv == "" or pv.isdigit()), "%P"))
+        ttk.Label(cf, text="秒末帧为封面").pack(side="left")
+
+        ttk.Separator(win).grid(row=8, column=0, columnspan=3, sticky="we", pady=5)
+
+        # ---- 同时压缩数 ----
+        ttk.Label(win, text="同时压缩数:").grid(row=9, column=0, sticky="w", **wp)
+        workers_var = tk.StringVar(value=str(getattr(self, "_max_workers", 1)))
+        ttk.Spinbox(win, textvariable=workers_var, width=8,
+                    from_=1, to=16, increment=1).grid(row=9, column=1, sticky="w", **wp)
+        ttk.Label(win, text="（建议 1~4，过大会占满 CPU/磁盘）", foreground="#888").grid(row=9, column=2, sticky="w", **wp)
 
         def ok():
             d = dl_var.get().strip()
@@ -2783,35 +3093,116 @@ class App:
             self._max_workers = max(1, int(workers_var.get() or 1))
             self.cqueue.max_workers = self._max_workers
             self.cqueue._start_workers()
+            self._overwrite = bool(overwrite_tg._on)
+            self._cover_enabled = bool(cover_tg._on)
+            try:
+                self._cover_second = max(0, int(cover_sec_var.get() or 0))   # 0 = 第一帧
+            except (ValueError, TypeError):
+                self._cover_second = 5
             self._save_compress_settings()
             self.cqueue.out_dir = self._compress_dir if self._compress_mode == "custom" else None
+            self.cqueue.overwrite = self._overwrite
+            self.cqueue.cover_enabled = self._cover_enabled
+            self.cqueue.cover_second = self._cover_second
             win.destroy()
             tail = "与源文件同目录" if self._compress_mode == "same" else self._compress_dir
-            self.log(f"设置已保存：下载目录 {d}；压缩输出 {tail}")
+            extra = "；覆盖原文件" if self._overwrite else ""
+            if self._cover_enabled:
+                extra += f"；封面第{self._cover_second}秒"
+            self.log(f"设置已保存：下载目录 {d}；压缩输出 {tail}{extra}")
 
-        ttk.Separator(win).grid(row=5, column=0, columnspan=3, sticky="we", pady=6)
-        ttk.Label(win, text="同时压缩数:").grid(row=6, column=0, sticky="w", **wp)
-        workers_var = tk.StringVar(value=str(getattr(self, "_max_workers", 1)))
-        workers_entry = ttk.Spinbox(win, textvariable=workers_var, width=8,
-                                    from_=1, to=16, increment=1)
-        workers_entry.grid(row=6, column=1, sticky="w", **wp)
-        workers_entry.configure(validate="key",
-                                validatecommand=(win.register(lambda p: p == "" or p.isdigit()), "%P"))
-        ttk.Label(win, text="（建议 1~4，过大会占满 CPU/磁盘）", foreground="#888").grid(row=6, column=2, sticky="w", **wp)
         btns = ttk.Frame(win)
-        btns = ttk.Frame(win)
-        btns.grid(row=7, column=1, columnspan=2, sticky="e", pady=10)
+        btns.grid(row=10, column=1, columnspan=3, sticky="e", pady=10)
         ttk.Button(btns, text="确定", width=8, command=ok).pack(side="left", padx=4)
         ttk.Button(btns, text="取消", width=8, command=win.destroy).pack(side="left", padx=4)
         win.columnconfigure(1, weight=1)
         win.resizable(False, False)
+        self.log("设置弹窗构建完成")
 
-    def _settings_pick_dir(self, var, mode_var=None):
+    def _settings_pick_dir(self, var, mode_var=None, custom_tg=None, same_tg=None):
         d = filedialog.askdirectory(initialdir=var.get() or SCRIPT_DIR, parent=self.root)
         if d:
             var.set(d)
             if mode_var is not None:
                 mode_var.set("custom")   # 浏览选中目录即视为"指定目录"
+            if custom_tg is not None:
+                custom_tg.set_on(True)
+            if same_tg is not None:
+                same_tg.set_on(False)
+
+    def _show_overwrite_tip(self, win, tg):
+        """开启覆盖开关时：toggle 旁边弹气泡提示，2 秒后渐隐"""
+        try:
+            tip = tk.Toplevel(win)
+            tip.overrideredirect(True)
+            x = tg._cv.winfo_rootx() + tg._cv.winfo_width() + 6
+            y = tg._cv.winfo_rooty() - 4
+            tip.geometry(f"+{x}+{y}")
+            tk.Label(tip, text="谨慎选择：成功后用压缩文件替换原文件",
+                     bg="#fff3cd", fg="#8a5a00", font=("Microsoft YaHei", 9),
+                     padx=10, pady=6, relief="solid", bd=1).pack()
+            tip.update_idletasks()
+
+            def fade(step=0):
+                try:
+                    tip.attributes("-alpha", max(0.05, 1.0 - step * 0.08))
+                    if step < 12:   # 约 2 秒渐隐（150ms × 12）
+                        tip.after(150, fade, step + 1)
+                    else:
+                        tip.destroy()
+                except Exception:
+                    pass
+            tip.after(350, fade, 0)
+        except Exception:
+            pass
+
+    def _diag_cp(self, tag="", _delayed=False):
+        """压缩列表布局诊断：删除后打印行/容器/视口的真实几何值，定位"删任务留空"根因"""
+        try:
+            cv = self._cp_canvas
+            inner = self._cp_inner
+            rows = [t.get("row") for t in self.cqueue.tasks]
+            alive = [r for r in rows if r is not None and r.frame.winfo_exists()]
+            lines = [f"[diag-cp {tag}] tasks={len(self.cqueue.tasks)} alive={len(alive)}"]
+            lines.append(f"  inner: winfo_y={inner.winfo_y()} h={inner.winfo_height()} req={inner.winfo_reqheight()} mgr={inner.winfo_manager()}")
+            try:
+                lines.append(f"  canvas: h={cv.winfo_height()} yview={cv.yview()} scroll={cv.cget('scrollregion')} bbox={cv.bbox('all')}")
+            except Exception:
+                pass
+            for r in alive[:6]:
+                p = r.rec.get("path", "")
+                lines.append(f"  row '{os.path.basename(p)[:24]}': mgr={r.frame.winfo_manager()} "
+                             f"x={r.frame.winfo_x()} y={r.frame.winfo_y()} h={r.frame.winfo_height()}")
+            self.log("\n".join(lines))
+            # 延迟复测一次：排除 relayout 之后还有异步事件（<Configure>/after 回调）破坏布局
+            if not _delayed:
+                try:
+                    self.root.after(800, lambda t=tag: self._diag_cp(t + "/延迟", _delayed=True))
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log(f"[diag-cp] error {e}")
+
+    def _clear_finished(self):
+        """清空压缩队列中已完成/已终止/失败/收益小的任务（只移出列表，不删输出文件）"""
+        removed = [r for r in self.cqueue.tasks if r.get("state") in ("done", "failed", "stopped", "skipped")]
+        for r in removed:
+            row = r.get("row")
+            if row is not None:
+                try:
+                    row.frame.destroy()
+                except Exception:
+                    pass
+            self.cqueue.remove(r)
+        if removed:
+            self._relayout_compress_rows()
+            try:
+                self._cp_canvas.yview_moveto(0)
+            except Exception:
+                pass
+            self.log(f"已清空 {len(removed)} 个已完成/终止任务（仅移出列表，不删文件）")
+        else:
+            self.log("没有可清空的已完成/终止任务")
 
     def _cq_start(self):
         """开始压缩：唤醒队列处理排队任务（手动模式，点此才真正开始压）"""
@@ -2833,27 +3224,40 @@ class App:
             self.cqueue.tasks.sort(key=grp)
 
     def _relayout_compress_rows(self):
-        """按 tasks 顺序用 place 手动布局压缩行（每行 pitch 34px）"""
+        """按 tasks 顺序用 pack 自动布局压缩行：Tk 原生补位——行销毁后下方行自动上移，
+        不存在 place 重排失效/容器不收缩的问题（根因修复）"""
         try:
-            ROW_H, PITCH = 30, 34
-            y = 2
             for t in self.cqueue.tasks:
                 r = t.get("row")
-                if r is None:
+                # 孤儿行防御：frame 已销毁（删除任务时残留）不参与布局
+                if r is None or not r.frame.winfo_exists():
                     continue
                 try:
-                    r.frame.place(x=0, y=y, relwidth=1.0, height=ROW_H)
+                    r.frame.pack_forget()
                 except Exception:
                     pass
-                y += PITCH
-            n = sum(1 for t in self.cqueue.tasks if t.get("row") is not None)
-            total = max(2 + n * PITCH, 30)
-            self._cp_inner.configure(height=total)
+            for t in self.cqueue.tasks:
+                r = t.get("row")
+                if r is None or not r.frame.winfo_exists():
+                    continue
+                try:
+                    # pack 布局：pady=2 + 行高30 = 34px 间距，与 PITCH 视觉一致
+                    r.frame.pack(fill="x", padx=4, pady=2)
+                except Exception:
+                    pass
+            self._cp_canvas.update_idletasks()
+            # pack 布局下 inner 高度由内容自动撑开；inner 的 <Configure> 回调已刷新 scrollregion。
+            # 删除顶部行后 yview 可能停在超界位置：内容不满一屏回顶；超界则 clamp 到 1.0
             try:
-                self._cp_canvas.configure(scrollregion=self._cp_canvas.bbox("all"))
+                yv = self._cp_canvas.yview()
+                total = self._cp_inner.winfo_reqheight() or 30
+                vh = self._cp_canvas.winfo_height()
+                if total <= vh and yv[0] > 0:
+                    self._cp_canvas.yview_moveto(0)
+                elif yv[0] > 1.0:
+                    self._cp_canvas.yview_moveto(1.0)
             except Exception:
                 pass
-            self._cp_canvas.update_idletasks()
         except Exception:
             pass
 
@@ -2967,16 +3371,7 @@ class App:
         self.q.put(("log", msg))
 
     def _show_log(self, msg):
-        self.log_text.config(state="normal")
-        self.log_text.insert("end", msg + "\n")
-        try:
-            lines = int(self.log_text.index("end-1c").split(".")[0])
-            if lines > 500:
-                self.log_text.delete("1.0", f"{lines - 300}.0")
-        except Exception:
-            pass
-        self.log_text.see("end")
-        self.log_text.config(state="disabled")
+        """调试日志：只写入内部 eazyvid.log（UI 日志面板已移除）"""
         try:
             with open(self.logfile, "a", encoding="utf-8") as _lf:
                 _lf.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
@@ -3012,16 +3407,6 @@ class App:
                 self.log("已取消自动关机")
         except Exception:
             pass
-
-    def _toggle_log(self):
-        if self.log_visible:
-            self.log_text.pack_forget()
-            self._log_btn.config(text="▸ 日志（调试）")
-            self.log_visible = False
-        else:
-            self.log_text.pack(fill="both", expand=True, padx=8, pady=4)
-            self._log_btn.config(text="▾ 日志（调试）")
-            self.log_visible = True
 
     def _poll_queue(self):
         n = 0
@@ -3400,7 +3785,39 @@ class App:
                 except Exception:
                     pass
             procs.clear()
-        self.log("下载开始，已停止后台探测")
+        self.log("已停止后台探测")
+
+    def _on_any_click(self, e):
+        """全局左键按下：若鼠标落在探测进度条上 → 取消探测。
+        ttk.Progressbar 的 widget 级 <Button-1> 在部分主题下会被内部吞掉（实测不触发），
+        用 winfo_containing 坐标命中检测兜底。"""
+        try:
+            w = self.root.winfo_containing(e.x_root, e.y_root)
+            if w is self._probe_bar:
+                self._cancel_probe()
+        except Exception:
+            pass
+
+    def _cancel_probe(self):
+        """点击探测进度条：取消当前探测（杀进程 + 作废线程 + 停动画）"""
+        try:
+            self._probe_seq += 1
+            self._halt_probes()
+            sn = getattr(self, "sniffer", None)
+            if sn is not None:
+                try:
+                    sn.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            self._probe_bar.stop()
+            self._probe_bar.update_idletasks()   # 强制停帧，防止滑块残留动画
+            self._probe_bar.pack_forget()
+        except Exception:
+            pass
+        self.log("已取消当前探测")
 
     def _probe_done_res(self, path):
         # 下载完成后 ffprobe 分辨率/编码，写日志（不压缩也能知道清晰度）
@@ -3645,6 +4062,284 @@ class App:
         except Exception as e:
             self.log(f"界面刷新错误[{kind}]：{e}")
 
+    def _update_pool_scrollregion(self):
+        """下载池滚动区域：行是 pack 布局，inner 高度自动变化，强制刷新 scrollregion"""
+        try:
+            w = max(self._pool_canvas.winfo_width(), 1)
+            self._pool_inner.update_idletasks()
+            h = self._pool_inner.winfo_reqheight()
+            self._pool_canvas.configure(scrollregion=(0, 0, w, h))
+            # 移除顶部任务后 yview 可能超界（内容变短）→ 修正，让剩余行顶到视口。
+            # 内容≤视口时无条件回顶：Tk 会把视口留在负区而 yview() 仍报 (0,1)，仅凭 yv[0]>0 判断会漏
+            try:
+                yv = self._pool_canvas.yview()
+                vh = self._pool_canvas.winfo_height()
+                if h <= vh:
+                    self._pool_canvas.yview_moveto(0)
+                elif yv[0] > 1.0:
+                    self._pool_canvas.yview_moveto(1.0)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_mousewheel(self, e):
+        """鼠标滚轮：按当前可见页面滚动对应列表（下载页→下载池，压缩页→压缩任务）
+        格式列表（Treeview 及其子控件）由 Treeview 原生滚轮处理，直接返回"""
+        try:
+            w = e.widget
+            if w is self.fmt_tree:
+                return
+            try:
+                if w.master is self.fmt_tree:
+                    return
+            except Exception:
+                pass
+            cv = self._cp_canvas if self._page == "cp" else self._pool_canvas
+            cv.yview_scroll(int(-e.delta / 120), "units")
+        except Exception:
+            pass
+
+    # ---------- 多选与批量移出 ----------
+    def _pool_rows(self):
+        """当前下载池所有行（过滤已销毁）"""
+        return [t.ui for t in self.pool.tasks if t.ui is not None and t.ui.frame.winfo_exists()]
+
+    def _cp_rows(self):
+        """当前压缩队列所有行（过滤已销毁）"""
+        return [t.get("row") for t in self.cqueue.tasks
+                if t.get("row") is not None and t["row"].frame.winfo_exists()]
+
+    def _pool_rows_sel(self):
+        return [r for r in self._pool_rows() if r.selected]
+
+    def _cp_rows_sel(self):
+        return [r for r in self._cp_rows() if r.selected]
+
+    def _pool_clear_sel(self):
+        for r in list(self._pool_sel):
+            try:
+                r.set_selected(False)
+            except Exception:
+                pass
+        self._pool_sel.clear()
+
+    def _cp_clear_sel(self):
+        for r in list(self._cp_sel):
+            try:
+                r.set_selected(False)
+            except Exception:
+                pass
+        self._cp_sel.clear()
+
+    def _pool_press(self, row, e):
+        """下载池行按下：Ctrl 切换 / Shift 扩展 / 普通单击单选"""
+        rows = self._pool_rows()
+        mod = e.state
+        try:
+            if mod & 0x0004:      # Ctrl（不更新锚点，Shift 从上次普通选择扩展）
+                row.set_selected(not row.selected)
+                if row.selected:
+                    self._pool_sel.add(row)
+                else:
+                    self._pool_sel.discard(row)
+            elif mod & 0x0001:    # Shift
+                if self._pool_anchor is None:
+                    self._pool_anchor = row
+                i0, i1 = rows.index(self._pool_anchor), rows.index(row)
+                lo, hi = min(i0, i1), max(i0, i1)
+                for r in rows:
+                    if lo <= rows.index(r) <= hi:
+                        r.set_selected(True)
+                        self._pool_sel.add(r)
+                    else:
+                        r.set_selected(False)
+                        self._pool_sel.discard(r)
+            else:
+                for r in rows:
+                    if r is not row:
+                        r.set_selected(False)
+                        self._pool_sel.discard(r)
+                row.set_selected(True)
+                self._pool_sel.add(row)
+                self._pool_anchor = row
+            self._pool_drag_row = row
+        except Exception:
+            pass
+
+    def _pool_drag(self, row, e):
+        """下载池划选：按下起点行到鼠标当前所在行之间全部选中"""
+        try:
+            w = self.root.winfo_containing(e.x_root, e.y_root)
+            cur = self._pool_row_at(w)
+            if cur is None or self._pool_drag_row is None:
+                return
+            rows = self._pool_rows()
+            i0, i1 = rows.index(self._pool_drag_row), rows.index(cur)
+            lo, hi = min(i0, i1), max(i0, i1)
+            for r in rows:
+                if lo <= rows.index(r) <= hi:
+                    r.set_selected(True)
+                    self._pool_sel.add(r)
+                else:
+                    r.set_selected(False)
+                    self._pool_sel.discard(r)
+        except Exception:
+            pass
+
+    def _pool_row_at(self, w):
+        """从任意子控件沿 master 链找所属下载池行"""
+        while w is not None:
+            for r in self._pool_rows():
+                if w is r.frame:
+                    return r
+            w = w.master
+        return None
+
+    def _cp_press(self, row, e):
+        """压缩行按下：Ctrl 切换 / Shift 扩展 / 普通单击单选"""
+        rows = self._cp_rows()
+        mod = e.state
+        try:
+            if mod & 0x0004:      # Ctrl（不更新锚点，Shift 从上次普通选择扩展）
+                row.set_selected(not row.selected)
+                if row.selected:
+                    self._cp_sel.add(row)
+                else:
+                    self._cp_sel.discard(row)
+            elif mod & 0x0001:
+                if self._cp_anchor is None:
+                    self._cp_anchor = row
+                i0, i1 = rows.index(self._cp_anchor), rows.index(row)
+                lo, hi = min(i0, i1), max(i0, i1)
+                for r in rows:
+                    if lo <= rows.index(r) <= hi:
+                        r.set_selected(True)
+                        self._cp_sel.add(r)
+                    else:
+                        r.set_selected(False)
+                        self._cp_sel.discard(r)
+            else:
+                for r in rows:
+                    if r is not row:
+                        r.set_selected(False)
+                        self._cp_sel.discard(r)
+                row.set_selected(True)
+                self._cp_sel.add(row)
+                self._cp_anchor = row
+            self._cp_drag_row = row
+        except Exception:
+            pass
+
+    def _cp_drag(self, row, e):
+        """压缩行划选"""
+        try:
+            w = self.root.winfo_containing(e.x_root, e.y_root)
+            cur = self._cp_row_at(w)
+            if cur is None or self._cp_drag_row is None:
+                return
+            rows = self._cp_rows()
+            i0, i1 = rows.index(self._cp_drag_row), rows.index(cur)
+            lo, hi = min(i0, i1), max(i0, i1)
+            for r in rows:
+                if lo <= rows.index(r) <= hi:
+                    r.set_selected(True)
+                    self._cp_sel.add(r)
+                else:
+                    r.set_selected(False)
+                    self._cp_sel.discard(r)
+        except Exception:
+            pass
+
+    def _cp_row_at(self, w):
+        while w is not None:
+            for r in self._cp_rows():
+                if w is r.frame:
+                    return r
+            w = w.master
+        return None
+
+    def _pool_remove_one(self, row):
+        """下载池单行移出（运行中跳过）"""
+        t = row.task
+        if t.state in ("downloading", "paused"):
+            self.log("下载中/暂停的任务请先自行处理再移出")
+            return
+        self.pool.remove(t)
+        self._pool_sel.discard(row)
+        self._update_pool_scrollregion()
+        try:
+            self._pool_canvas.yview_moveto(0)
+        except Exception:
+            pass
+        self.log(f"已移出队列：{t.title}")
+
+    def _pool_batch_remove(self, rows):
+        """下载池批量移出（运行中跳过）"""
+        running = [r for r in rows if r.task.state in ("downloading", "paused")]
+        ok = [r for r in rows if r.task.state not in ("downloading", "paused")]
+        for r in ok:
+            try:
+                self.pool.remove(r.task)
+            except Exception:
+                pass
+            self._pool_sel.discard(r)
+        self._update_pool_scrollregion()
+        if running:
+            self.log(f"批量移出：{len(ok)} 项已移出，{len(running)} 项运行中已跳过（请先自行终止）")
+        elif ok:
+            self.log(f"已批量移出 {len(ok)} 项")
+        else:
+            self.log("没有可移出的任务（均为运行中）")
+
+    def _cp_remove_one(self, row):
+        """压缩池单行移出（压缩中跳过）"""
+        r = row.rec
+        if r.get("state") == "compressing":
+            self.log("压缩中的任务请先点「终止」再移出")
+            return
+        if self.cqueue.remove(r):
+            try:
+                row.frame.destroy()
+            except Exception:
+                pass
+            self._cp_sel.discard(row)
+            self._relayout_compress_rows()
+            # 删除后强制视口回顶：scrollregion 缩短但 yview 停在旧位置会留下顶部空白
+            try:
+                self._cp_canvas.yview_moveto(0)
+            except Exception:
+                pass
+            self._diag_cp("单行移出")
+            self.log(f"已移出队列：{os.path.basename(r['path'])}")
+
+    def _cp_batch_remove(self, rows):
+        """压缩池批量移出（压缩中跳过）"""
+        running = [r for r in rows if r.rec.get("state") == "compressing"]
+        ok = [r for r in rows if r.rec.get("state") != "compressing"]
+        for r in ok:
+            try:
+                self.cqueue.remove(r.rec)
+            except Exception:
+                pass
+            try:
+                r.frame.destroy()
+            except Exception:
+                pass
+            self._cp_sel.discard(r)
+        self._relayout_compress_rows()
+        try:
+            self._cp_canvas.yview_moveto(0)
+        except Exception:
+            pass
+        self._diag_cp("批量移出")
+        if running:
+            self.log(f"批量移出：{len(ok)} 项已移出，{len(running)} 项压缩中已跳过（请先自行终止）")
+        elif ok:
+            self.log(f"已批量移出 {len(ok)} 项")
+        else:
+            self.log("没有可移出的任务（均为压缩中）")
+
     def _ui_event_impl(self, event):
         kind, payload = event
         if kind == "added":
@@ -3692,6 +4387,8 @@ class App:
                 else:
                     tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
                     self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
+        # 链结束后统一刷新下载池滚动区域
+        self._update_pool_scrollregion()
 
     # ---------- 服务 ----------
     def _start_capture_server(self):

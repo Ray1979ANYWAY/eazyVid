@@ -772,3 +772,108 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 原逻辑：开关 ON 且无任务 → 立即提示关机（不对）。
 - 修正：开关 ON 后记录 _had_tasks；有任务时置 True，任务清空且 _had_tasks 才触发关机。刚开无任务不触发。
 - 全绿。
+
+### 2026-09-29 置顶按钮改版
+- 原 ttk.Button "⬆"（默认样式有边框、字形小、渲染偏）→ tk.Button "▲" 微软雅黑 11pt 粗体、relief=flat/bd=0/highlightthickness=0 去边框、手型光标。
+- 全绿。
+
+### 2026-09-29 列表滚动修复（压缩任务 + 下载池）
+- 根窗口 bind_all MouseWheel → 按当前可见页滚动对应列表（下载页→下载池、压缩页→压缩任务）。
+- 压缩页 scrollregion 显式 (0,0,width,total)（不再依赖 bbox 时机）。
+- 下载池新增 _update_pool_scrollregion（winfo_reqheight），行加入/完成/进度/失败等链尾统一刷新；行 pack 自动撑高 inner。
+- 全绿。
+
+### 2026-09-29 格式列表滚动
+- 格式列表（Treeview height=9）原无滚动条 → 新增垂直滚动条（yscrollcommand 联动）。
+- 滚轮分发：鼠标在格式列表（Treeview 及其子控件）上时直接返回，由 Treeview 原生滚轮处理，避免与下载池双重滚动。
+- 验证：15 行插入后 yview=0.93 可滚；格式列表滚轮不滚下载池。全绿。
+
+### 2026-09-29 下载池完成态删除：光标就近两行菜单
+- 完成态点删除：不再用 askyesno 弹窗 → tk.Menu.tk_popup 在光标位置弹出两行："仅移出列表" / "移出列表并删除文件"。
+- 下载中/暂停仍保留警告弹窗（中断下载属重要操作）。压缩页删除不变（只移出列表）。
+- 全绿。
+
+### 2026-09-29 下载池完成态删除改为垃圾桶旁两行菜单
+- 完成态点垃圾桶：不再 askyesno 弹窗 → 两行菜单（"仅移出列表"/"移出列表并删除文件"）贴在垃圾桶按钮正下方（winfo_rootx/rooty+height）。
+- 下载中/暂停仍保留警告弹窗。全绿。
+
+### 2026-09-29 压缩行状态底色
+- 完成态整行薰衣草紫 #E4E0FA（30% 透明度效果）；失败/终止/收益小整行淡橙 #FBEDD8；排队灰底；压缩中保持灰底+淡蓝进度（100% 到终止按钮左缘）。
+- 状态底色铺满整行；smoke 断言同步（stopped 背景层=淡橙 1 矩形）。全绿。
+
+### 2026-09-29 滚动条比例修复（下载池 + 压缩页）
+- 根因：两个 canvas 只设了 command=canvas.yview，缺 yscrollcommand=滚动条.set → 滑块不随内容联动、不成比例。
+- 修复：下载池/压缩页 canvas 均 configure(yscrollcommand=sb.set/sb2.set)；下载池 scrollregion 先 update_idletasks 再取 reqheight（行渲染出真实高度）。
+- 验证：联动配置生效、yview 变化正常。全绿。
+
+### 2026-09-29 移除主框架日志按钮/面板
+- 底部「日志（调试）」按钮与内嵌日志面板移除（主框架只剩关机开关）。
+- 调试日志仍写入 eazyvid.log（_show_log 简化为只写文件），smoke 同步删除日志抽屉测试。全绿。
+
+### 2026-09-30 压缩页清空结束任务按钮
+- 压缩队列按钮行最右新增「清空已完成/终止」（side=right 对齐），一键清空 done/failed/stopped/skipped（只移出列表不删输出文件），排队/压缩中保留。
+- 验证：done+stopped+queued 混合 → 清后只剩 queued。全绿。
+
+### 2026-09-30 双池多选 + 批量移出 + 探测进度条取消
+- 下载池/压缩池：单击单选、Ctrl 加选（不更新锚点）、Shift 扩展（锚点=上次普通选择）、按住拖动划选（起点行→鼠标所在行整段选中）。
+- 选中行底色比灰底深（ROW_SEL #C9C9C9；压缩行由 _paint_cv 分支，下载池 frame+labels 换 bg）。
+- 右键：多选→「移出队列（N 项，运行中除外）」；单选→原右键菜单（打开/打开所在文件夹）+「移出队列」。运行中（下载中/暂停/压缩中）一律跳过，提示先自行终止。
+- 探测进度条：点击即取消当前探测（seq+1、杀进程、停动画），悬停 tooltip「点击取消当前探测」；_halt_probes 文案通用化。
+- 修两个坑：Ctrl 曾覆盖 Shift 锚点；拖动状态变量与方法同名（_pool_drag/_cp_drag 被实例属性覆盖）→ 改名 _pool_drag_row/_cp_drag_row。
+- 验证：单击/Ctrl/Shift/划选/批量跳过/选中底色/取消探测 全通过；回归全绿。
+
+### 2026-09-30 大迭代汇总（v2.x 列表交互大升级）
+本轮核心：列表全面支持「选择 → 批量操作」的桌面交互范式，加上探测可中断。
+- 双池多选：单击单选 / Ctrl 加选 / Shift 扩展 / 拖动划选；选中行底色加深（ROW_SEL）。
+- 右键批量移出队列（运行中除外：下载中/暂停/压缩中自动跳过，提示先自行终止）；单选保留打开/打开所在文件夹 + 移出队列。
+- 探测进度条可点击取消（杀进程/作废线程/停动画）+ tooltip。
+- 同轮完成：滚动条 yscrollcommand 联动成比例、格式列表滚动条、主框架日志按钮/面板移除（调试日志进 eazyvid.log）、压缩页状态底色（完成=薰衣草紫/失败终止=淡橙）、清空已完成/终止按钮、下载池完成态删除改垃圾桶旁两行菜单、关机开关触发逻辑、压缩后缀 _compressed、压缩行右侧组重排+置顶。
+- 里程碑意义：多选+批量移出填补了"任务一多就得逐个删"的缺口，是下载/压缩两面板共用交互模型的关键一步；后续可平移：批量改模式、批量置顶、跨面板拖任务。
+
+### 2026-09-30 修复：移除顶部任务后不"冒泡" + 探测取消动画残留
+- 根因（冒泡）：批量移出顶部任务后 scrollregion 高度变小，但 canvas yview 停在超界位置（实测 (1.01,1.01)）→ 视口显示内容底部之外，剩余行 y 坐标其实已重排到顶部，视觉上却是"没顶上去"。压缩页 _relayout 与下载池 _update_pool_scrollregion 末尾统一加 yview 修正：内容不满一屏回顶，超界 clamp 到 1.0。
+- 探测滑块：_cancel_probe 的 stop() 后加 update_idletasks() 强制停帧，防止动画残留；进度条加 cursor=hand2 提示可点击。用户之前不确定"是取消了只是滑块在动，还是没取消"——现在取消日志 + 停帧 + 隐藏三保险。
+- 验证：12 任务滚动到底→移除顶部 4 个→yview 不再越界（回归 (1.0,1.0)）；test_v2 + smoke_v2 全绿。
+
+### 2026-09-30 修复（第二轮）：进度条点击被 ttk 吞事件 + 孤儿行占位
+- 进度条点击取消：实测 event_generate 都不触发 widget 级 <Button-1>——ttk.Progressbar 在部分主题下内部吞掉点击。改用全局 bind_all("<Button-1>") + winfo_containing(x_root,y_root) 坐标命中检测，命中进度条即取消。验证：模拟点击 → 进度条隐藏 + 日志出现。
+- 顶部空白根治（用户定位 + 防御双保险）：用户发现"删减到少于一页后页面仍被认为是长页面"——根因是 relayout 里已销毁的孤儿行 frame 仍占位（y += PITCH）且计入高度 n，导致页面虚高。_relayout_compress_rows 加 winfo_exists() 检查：孤儿行不占位、不计高度；配合上一轮 yview 越界修正。验证：destroy 行但 rec 残留 → 剩余行仍从 y=2 连续排列。
+- 回归：test_v2 + smoke_v2 全绿。
+
+### 2026-09-30 修复（第三轮）：删除任务后视口强制回顶（根治"从大于一页删到小于一页出现占位"）
+- 用户定位：只要任务列从大于一页删到小于一页就出现顶部占位空白。
+- 根因：删除后 scrollregion/bbox 其实已正确收缩，但 canvas yview 停在旧滚动位置（如滚动到 0.5 后删除，yview 仍按原绝对位置），视口显示内容中部/底部，顶部行在视口外 → 视觉上是"占位空白"。此前条件式修正依赖 winfo_height()，在页面未布局/隐藏时返回 1，判断不可靠。
+- 方案：删除操作后无条件 yview_moveto(0)。覆盖所有删除入口：压缩页 _cp_remove_one/_cp_batch_remove/_clear_finished，下载池 _pool_remove_one/_pool_batch_remove。非删除类 relayout 调用（添加/排序/完成冒泡）不受影响。
+- 验证：滚动到 yview 0.5 → 批量删除 → yview 回 (0.0,0.0)；test_v2 + smoke_v2 全绿。
+
+### 2026-09-30 修复（第四轮）：补漏两个删除入口——压缩行垃圾桶 + 下载池完成态删除
+- 前一轮只覆盖了 5 个删除入口，漏掉：① 压缩行垃圾桶按钮 CompressRow._on_delete（逐个删的主入口）② 下载池完成态"仅移出列表/删文件"两行菜单 _del_done（含下载中删除确认路径，共 2 处）。
+- 现已全部覆盖 9 处：压缩页 5（relayout 越界修正 + _cp_remove_one + _cp_batch_remove + _clear_finished + 行垃圾桶），下载池 4（_pool_remove_one + _pool_batch_remove + _del_done×2）。
+- 验证：行垃圾桶删除 → 视口回顶；回归全绿。
+
+### 2026-09-30 迭代（第五轮）：方形 toggle + 设置弹窗改造 + 压缩布局根因防御 + 覆盖/封面功能
+- **压缩列表删任务留空（第 5 轮）**：发现根因线索——行 frame 创建时 pack(fill=x)，relayout 却用 place，pack/place 混用可能使 place 不接管几何管理、行不重排。relayout 里 place 前先 pack_forget()，确保 place 完全接管。9 个删除入口回顶上轮已全补。
+- **ToggleSwitch 全局改方形**：圆弧轨道+圆滑块 → 方形轨道+方形滑块（用户：圆弧毛刺太严重）。影响关机开关、设置页全部开关。
+- **设置弹窗改造**：① 压缩输出目录由两个 Radiobutton 改为两个方形 toggle 互斥（同目录/指定目录，开一关一，浏览指定目录自动切 custom）；② 新增"压缩后覆盖原文件（谨慎选择）"toggle；③ 新增"以第 N 秒末为封面"toggle + 整数 Spinbox（仅阿拉伯数字、上下箭头 1~999999）；④ 新增项持久化（overwrite/cover_enabled/cover_second），启动加载同步 cqueue。
+- **覆盖功能**：worker 压缩成功后 os.replace(out, 原文件)；完成态行压缩比用压缩前 orig_size 计算（覆盖后原文件已被替换）。
+- **封面功能**：压缩完成后 ffmpeg 截源视频第 N 秒帧 → attached_pic 附加为封面；失败静默保留原输出不影响压缩。
+- 回归：test_v2/smoke_v2 全绿（mock 签名补 cover_sec）。
+
+### 2026-09-30 迭代（第六轮）：压缩行布局根因修复（place → 纯 pack）+ 设置弹窗异常日志 + toggle 对齐/文案间距
+- **空白根因修复（第 6 轮，换根本方案）**：行布局从 place 手动重排改为**纯 pack 自动布局**。诊断日志（05:21/05:23/05:26 批量移出）显示 relayout 执行瞬间行 y=2、yview=(0,1)、容器收缩都正常，但截图仍有约 200px 空白——说明 relayout 打完诊断后还有后续事件破坏布局。pack 是 Tk 原生几何管理：行 destroy 后下方自动补位、inner 高度由内容自动撑开、<Configure> 回调自动刷新 scrollregion，从机制上不存在"重排失效/容器不收缩"。保留 yview 回顶与超界 clamp。
+- **设置弹窗构建中断**：用户截图显示设置面板只渲染前 3 行（下载目录/压缩输出目录/指定目录），覆盖/封面/并发行未出现。_open_settings 拆出 _build_settings_window 并包 try/except，异常 traceback 写日志（"设置弹窗构建失败"），构建完成打"设置弹窗构建完成"标记——等待用户用最新实例复测定位。
+- **设置页 toggle 对齐**：覆盖/封面行的 toggle 与"同目录/指定目录"行统一左对齐（col1）；toggle 与文案放入同一 Frame 紧挨（padx 6px），消除 col2 远距空隙。文案："压缩后覆盖原文件"、"以第 [N] 秒末帧为封面"。
+- 覆盖开关开启时：toggle 旁气泡提示 2 秒渐隐（替代常驻红字注释）。
+- 回归：test_v2/smoke_v2 全绿。
+
+### 2026-09-30 迭代（第七轮）：删任务留空根因定位（inner 下移 145px）+ 设置崩溃修复 + Spinbox 下箭头
+- **删任务留空：延迟诊断抓到铁证**。批量移出后立即 diag：inner winfo_y=2 正常；800ms 延迟 diag：inner winfo_y=147——行在 inner 内排列正常，**是 inner 容器整体下移 ~145px**（顶部空白=容器偏移）。Tk 怪癖：内容从 >一页删到 ≤视口时，视口停在负区/底部残留，而 yview() 仍报 (0,1)，诊断看不出。**根治**：把两个池的 inner `<Configure>` 回调改为独立方法 `_on_pool_inner_cfg`/`_on_cp_inner_cfg`——刷新 scrollregion 后**若内容 ≤ 视口则强制 yview_moveto(0)**，从机制上杜绝顶部空白。同时修正 relayout 中 clamp 分支（内容≤视口无条件回顶）。
+- **设置弹窗崩溃：TclError 定位**——`cannot use geometry manager pack inside .!toplevel which already has slaves managed by grid`：覆盖/封面 toggle 父容器误设为设置窗口 Toplevel（pack）与窗口内 grid 冲突，构建在第 5 行崩。修复：toggle 改放入各自 Frame（of/cf）内 pack。
+- **封面秒数下箭头调不到零**：ttk.Spinbox validate="key" 干扰箭头按钮，改为 validate="focusout"（失焦验证数字），加 wrap=False。
+- 结构事故修复：插入方法时误将 __init__ 底部日志段并入 _show_page 骨架，已拆回。
+- 回归：test_v2/smoke_v2 全绿。
+
+### 2026-09-30 迭代（第八轮）：覆盖 toggle 与输出目录联动 + 下载池回顶逻辑统一
+- 覆盖 toggle 联动：仅"与源文件同目录"模式下可操作；切换"指定目录"时覆盖 toggle 灰色禁用（ToggleSwitch 新增 set_enabled：灰色外观+点击忽略），且自动关闭覆盖（指定目录下覆盖无意义）。
+- 下载池 _update_pool_scrollregion 的 clamp 条件从 `h<=vh and yv[0]>0` 改为内容≤视口无条件回顶（与压缩池一致；Tk 负区残留时 yview() 仍报 (0,1)）。
+- 回归全绿。
