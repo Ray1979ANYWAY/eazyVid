@@ -16,6 +16,7 @@ import re
 import queue
 import threading
 import time
+import math
 import shutil
 import tempfile
 import urllib.request
@@ -40,7 +41,6 @@ COMPRESS_MODES = {
     "x265 默认(推荐)": {"codec": "libx265", "params": ["-crf", "24", "-preset", "medium"], "desc": "画质基本不变，体积约减半"},
     "x265 高画质":     {"codec": "libx265", "params": ["-crf", "20", "-preset", "medium"], "desc": "最接近原片，体积减小较少"},
     "x265 小体积":     {"codec": "libx265", "params": ["-crf", "27", "-preset", "medium"], "desc": "体积最小，画质略有损失"},
-    "NVENC 硬件加速":   {"codec": "hevc_nvenc", "params": [], "desc": "用显卡编码，速度快10倍，体积减小较少"},
 }
 
 def fmt_size(n):
@@ -1152,7 +1152,7 @@ def _probe_duration(path, log_cb=None):
 
 def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, proc_holder=None):
     """压缩单个视频；返回 (是否成功, 输出路径)。mode_name 必须是 COMPRESS_MODES 的键。
-    与 compress.py 对齐：分辨率不变、低码率音频原样复制、10bit 适配、NVENC 失败自动降级软件 x265。"""
+    与 compress.py 对齐：分辨率不变、低码率音频原样复制、10bit 适配。"""
     try:
         m = COMPRESS_MODES.get(mode_name) or next(iter(COMPRESS_MODES.values()))
         if out_dir:
@@ -1160,9 +1160,9 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                 os.makedirs(out_dir, exist_ok=True)
             except OSError:
                 pass
-            out_path = os.path.join(out_dir, os.path.basename(os.path.splitext(in_path)[0]) + "_压缩.mp4")
+            out_path = os.path.join(out_dir, os.path.basename(os.path.splitext(in_path)[0]) + "_compressed.mp4")
         else:
-            out_path = os.path.splitext(in_path)[0] + "_压缩.mp4"
+            out_path = os.path.splitext(in_path)[0] + "_compressed.mp4"
         ff = os.path.join(SCRIPT_DIR, "ffmpeg.exe")
         if not os.path.exists(ff):
             ff = "ffmpeg"
@@ -1240,41 +1240,22 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
             return proc.returncode
 
         # 压缩前预检：源码率已很低（≈VP9/AV1 高度压缩，CRF 重压必然更大）→ 直接跳过，不浪费编码时间
-        if v_br and v_br <= 2000 * 1000:
+        # ffprobe 报告的 bit_rate 可能缺失/写错（部分封装不写该字段）→ 用 文件大小÷时长 实测总码率兜底
+        try:
+            if duration:
+                real_br = int(os.path.getsize(in_path) * 8.0 / duration)
+                v_br = max(v_br, real_br)
+        except Exception:
+            pass
+        if v_br and v_br <= 1000 * 1000:
             log_cb(f"源码率仅 {v_br // 1000}kbps（已高度压缩），压缩预计无法减小体积，跳过并保留原文件")
             return True, None
         vargs = ["-c:v", m["codec"]] + list(m.get("params", []))
-        # NVENC：按源视频码率的 50% 设目标码率，保证有实际压缩效果
-        if m["codec"] == "hevc_nvenc":
-            src_br = 0
-            try:
-                r = subprocess.run([ff, "-i", in_path], capture_output=True, text=True,
-                                   timeout=10, errors="replace",
-                                   creationflags=NO_WINDOW | 0x00004000)
-                mm = re.search(r"bitrate:\s*(\d+)\s*kb/s", r.stderr or "")
-                if mm:
-                    src_br = int(mm.group(1)) * 1000
-            except Exception:
-                pass
-            target = max(int(src_br * 0.5 / 1000), 600) if src_br > 0 else 2500
-            vargs = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
-                     "-rc", "vbr", "-b:v", f"{target}k",
-                     "-maxrate", f"{int(target * 1.3)}k", "-bufsize", f"{int(target * 2)}k",
-                     "-cq", "27", "-spatial-aq", "1"]
-        # 10bit 色深：软件 x265 按 10bit 编码；NVENC 不支持则自动改软件 x265
+        # 10bit 色深：软件 x265 按 10bit 编码
         if any(x in pix_fmt for x in ("10le", "12le", "p010", "p012")):
-            if m["codec"] == "libx265":
-                vargs += ["-pix_fmt", "yuv420p10le"]
-            else:
-                log_cb("检测到 10bit 源视频，NVENC 不支持，自动改用软件 x265")
-                vargs = ["-c:v", "libx265", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p10le"]
+            vargs += ["-pix_fmt", "yuv420p10le"]
         log_cb(f"开始压缩：{os.path.basename(in_path)} → {os.path.basename(out_path)}（{mode_name}）")
         rc = _run(vargs)
-        # 硬件编码失败时自动降级为软件 x265 重试
-        if rc != 0 and m["codec"] == "hevc_nvenc":
-            log_cb("硬件编码失败，自动改用软件 x265 重试...")
-            vargs = ["-c:v", "libx265", "-crf", "24", "-preset", "medium"]
-            rc = _run(vargs)
         if rc != 0 or not os.path.exists(out_path):
             log_cb(f"压缩失败（返回码 {rc}）")
             return False, None
@@ -1413,7 +1394,7 @@ class CompressQueue:
         try:
             d = self.out_dir or os.path.dirname(rec["path"]) or "."
             stem = os.path.splitext(os.path.basename(rec["path"]))[0]
-            cands.add(os.path.join(d, f"{stem}_压缩.mp4"))
+            cands.add(os.path.join(d, f"{stem}_compressed.mp4"))
         except Exception:
             pass
         out = rec.get("out")
@@ -1497,6 +1478,7 @@ class CompressQueue:
                 self.on_event(("cdone", rec))
 # ---------- GUI ----------
 import tkinter as tk
+import tkinter.font as tkfont
 # 内置 tkinterdnd2（vendor 目录自包含，任何 Python 环境都能用文件拖放，无需 pip 安装）
 try:
     _VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
@@ -1539,9 +1521,7 @@ def _os_reveal(path):
             if os.path.isdir(path):
                 os.startfile(path)                  # 目录：直接打开（最可靠）
             elif os.path.exists(path):
-                try:
-                    _reveal_select(path)            # 文件：原生 API 定位选中
-                except Exception:
+                if not _reveal_select(path):        # 文件：原生 API 定位选中
                     os.startfile(d)                 # 定位失败兜底：打开父目录
             else:
                 while d and not os.path.isdir(d):
@@ -1561,7 +1541,7 @@ def _os_reveal(path):
 
 
 def _reveal_select(path):
-    """Explorer 原生 API：打开文件夹并选中文件（ctypes 调 shell32）"""
+    """Explorer 原生 API：打开文件夹并选中文件（ctypes 调 shell32）；成功返回 True，失败返回 False"""
     import ctypes
     from ctypes import wintypes
     ole32 = ctypes.windll.ole32
@@ -1583,12 +1563,13 @@ def _reveal_select(path):
         item_pidl = parse(path)
         try:
             arr = (ctypes.c_void_p * 1)(item_pidl.value)
-            shell32.SHOpenFolderAndSelectItems(folder_pidl, 1, arr, 0)
+            hr = shell32.SHOpenFolderAndSelectItems(folder_pidl, 1, arr, 0)
+            return hr == 0          # S_OK 才算成功
         finally:
             ole32.CoTaskMemFree(item_pidl)
             ole32.CoTaskMemFree(folder_pidl)
     except Exception:
-        pass
+        return False
     finally:
         try:
             ole32.CoUninitialize()
@@ -1607,6 +1588,10 @@ class TaskRow:
         self.name.pack(side="left")
         self.name.bind("<Double-1>", self._on_name_double)
         self.name.bind("<Button-3>", self._on_name_right)
+        # 悬停显示完整文件名（Label 视觉裁剪不影响看全名）
+        self._tip = None
+        self.name.bind("<Enter>", self._on_name_tip_show)
+        self.name.bind("<Leave>", self._on_name_tip_hide)
         self.bar = tk.Canvas(self.frame, width=130, height=18, highlightthickness=0)
         self.bar.pack(side="left", padx=4)
         self.pct = ttk.Label(self.frame, text="0%", width=11)
@@ -1621,7 +1606,8 @@ class TaskRow:
         self.mode_cb.current(0 if not task.mode else list(COMPRESS_MODES.keys()).index(task.mode) + 1)
         self.mode_cb.bind("<<ComboboxSelected>>", self._on_mode)
         self._bar_mode = "determinate"
-        self.del_btn = ttk.Button(self.frame, text="删除", width=5, command=self._on_delete)
+        self.del_btn = ttk.Button(self.frame, text="🗑️", width=2, style="Trash.TButton",
+                                 command=self._on_delete)
         # 右侧组从右往左 pack（先 pack 的最靠右）→ 状态+速度+按钮+模式+删除整体右对齐、随面板拉伸自适应、不叠加
         self.del_btn.pack(side="right", padx=2)
         self.mode_cb.pack(side="right", padx=2)
@@ -1629,6 +1615,30 @@ class TaskRow:
         self.pause_btn.pack(side="right", padx=2)
         self.speed_lbl.pack(side="right")
         self.state_lbl.pack(side="right")
+        bind_tooltip(self.del_btn, "删除", self.app.root)
+
+    def _on_name_tip_show(self, _e=None):
+        try:
+            if self._tip is not None:
+                return
+            tip = tk.Toplevel(self.app.root)
+            tip.overrideredirect(True)
+            x = self.name.winfo_rootx()
+            y = self.name.winfo_rooty() - 26
+            tip.geometry(f"+{x}+{y}")
+            tk.Label(tip, text=self.task.title, bg="#fff8dc", fg="#333",
+                     font=("Microsoft YaHei", 9), padx=10, pady=4).pack()
+            self._tip = tip
+        except Exception:
+            pass
+
+    def _on_name_tip_hide(self, _e=None):
+        try:
+            if self._tip is not None:
+                self._tip.destroy()
+                self._tip = None
+        except Exception:
+            self._tip = None
 
     def _name_path(self):
         return os.path.join(self.task.out_dir, self.task.title)
@@ -1695,14 +1705,14 @@ class TaskRow:
         self.task.mode = None if v == "不压缩" else v
 
     def _show_merge_tip(self):
-        """行位置气泡：正在合并音轨，请稍后（3.5 秒自动消失）"""
+        """行位置气泡：正在合并音轨，请稍候（3.5 秒自动消失）"""
         try:
             tip = tk.Toplevel(self.app.root)
             tip.overrideredirect(True)
             x = self.frame.winfo_rootx()
             y = self.frame.winfo_rooty() - 26
             tip.geometry(f"+{x}+{y}")
-            tk.Label(tip, text="正在合并音轨，请稍后", bg="#fff8dc", fg="#333",
+            tk.Label(tip, text="正在合并音轨，请稍候", bg="#fff8dc", fg="#333",
                      font=("Microsoft YaHei", 10), padx=12, pady=6).pack()
             tip.after(3500, tip.destroy)
         except Exception:
@@ -1800,6 +1810,71 @@ def _estimate_eta(samples, now, cur_p, prev_ema=None):
     ema = inst if prev_ema is None else 0.4 * inst + 0.6 * prev_ema
     return max(0.0, (100.0 - cur_p) / ema), ema
 
+def bind_tooltip(widget, text, root):
+    """给任意控件绑 tooltip：悬停显示文字（黄底），移出隐藏"""
+    _t = {"win": None}
+    def _show(_e=None):
+        try:
+            if _t["win"] is not None:
+                return
+            w = tk.Toplevel(root)
+            w.overrideredirect(True)
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() - 26
+            tk.Label(w, text=text, bg="#fff8dc", fg="#333",
+                     font=("Microsoft YaHei", 9), padx=8, pady=3).pack()
+            w.update_idletasks()
+            w.geometry(f"+{x - w.winfo_reqwidth() // 2}+{y}")
+            _t["win"] = w
+        except Exception:
+            pass
+    def _hide(_e=None):
+        try:
+            if _t["win"] is not None:
+                _t["win"].destroy()
+                _t["win"] = None
+        except Exception:
+            pass
+    widget.bind("<Enter>", _show)
+    widget.bind("<Leave>", _hide)
+    widget.bind("<ButtonPress-1>", _hide)   # 点击时收起，避免残留
+    return _hide
+
+class ToggleSwitch:
+    """自绘开关：内部持有 Canvas（不继承 widget，避开 tkinter 子类命名问题）
+    圆角轨道 + 白色滑块，点击切换；set_on 供外部复位"""
+    def __init__(self, parent, on_toggle=None, w=46, h=24):
+        try:
+            _bg = ttk.Style().lookup("TFrame", "background")
+        except Exception:
+            _bg = "#f0f0f0"
+        self._cv = tk.Canvas(parent, width=w, height=h, highlightthickness=0, bd=0, bg=_bg)
+        self._w, self._h = w, h
+        self._on = False
+        self._on_toggle = on_toggle
+        self._cv.bind("<Button-1>", self._on_click)
+        self._draw()
+    def _draw(self):
+        cv = self._cv
+        cv.delete("all")
+        r = self._h / 2
+        col = "#3b82f6" if self._on else "#c9ccd6"
+        cv.create_oval(0, 0, self._h, self._h, fill=col, outline="")
+        cv.create_oval(self._w - self._h, 0, self._w, self._h, fill=col, outline="")
+        cv.create_rectangle(r, 0, self._w - r, self._h, fill=col, outline="")
+        sx = self._w - self._h + 2 if self._on else 2
+        cv.create_oval(sx, 2, sx + self._h - 4, self._h - 2, fill="#ffffff", outline="")
+    def _on_click(self, _e):
+        self._on = not self._on
+        self._draw()
+        if self._on_toggle:
+            self._on_toggle(self._on)
+    def set_on(self, on):
+        self._on = on
+        self._draw()
+    def pack(self, **kw):
+        self._cv.pack(**kw)
+
 def _fmt_eta(secs):
     """预计剩余时间显示：-- / 约N秒 / 约N分 / 约N时M分"""
     if not secs:
@@ -1809,8 +1884,12 @@ def _fmt_eta(secs):
         return f"约{s}秒"
     if s < 3600:
         return f"约{s // 60}分"
-    h, m = divmod(s, 3600)
-    return f"约{h}时{m // 60}分"
+    if s < 86400:
+        h, m = divmod(s, 3600)
+        return f"约{h}时{m // 60}分"
+    d, r = divmod(s, 86400)
+    h = r // 3600
+    return f"约{d}天{h}时" if h else f"约{d}天"
 
 def _fmt_elapsed(secs):
     """压缩执行时长显示：45秒 / 5分30秒 / 1时23分"""
@@ -1850,16 +1929,19 @@ class CompressRow:
         self._cv = self.frame
         self._cv.bind("<Configure>", self._sync_cv)   # 行尺寸变化：布局右侧组 + 重绘
         # 文字直接画在 canvas 上（随进度底色走，不用灰底 Label 遮挡进度色）
+        # 文件名保留完整文本（数据完整，压缩输出全名）；显示时按列宽硬切断（Excel 式，不换行、无省略号）
+        self._full_name = os.path.basename(rec["path"])
         self._txt_name = self._cv.create_text(6, 15, anchor="w",
-                                              text=os.path.basename(rec["path"]), fill="#1f1f1f")
-        self._txt_size = self._cv.create_text(336, 15, anchor="w", text="", fill="#1f1f1f")
-        self._txt_pct = self._cv.create_text(0, 15, anchor="e", text="", fill="#1f1f1f")
-        self._txt_eta = self._cv.create_text(0, 15, anchor="e", text="", fill="#606060")
-        self._txt_state = self._cv.create_text(0, 15, anchor="e", text="排队", fill="#1f1f1f")
+                                              text=self._full_name, fill="#1f1f1f")
+        self._txt_size = self._cv.create_text(336, 15, anchor="w", text="", fill="#1f1f1f", tags="rinfo")
+        self._txt_pct = self._cv.create_text(0, 15, anchor="e", text="", fill="#1f1f1f", tags="rinfo")
+        self._txt_eta = self._cv.create_text(0, 15, anchor="e", text="", fill="#606060", tags="rinfo")
+        self._txt_state = self._cv.create_text(0, 15, anchor="e", text="排队", fill="#1f1f1f", tags="rinfo")
         # 右侧控件：嵌入 canvas（按钮/下拉自带底色，位于行右侧；进度 100% 只到删除按钮右缘）
         self.stop_btn = ttk.Button(self.frame, text="终止", width=4, command=self._on_stop)
         self.restart_btn = ttk.Button(self.frame, text="重新压缩", width=7, command=self._on_restart)
-        self.del_btn = ttk.Button(self.frame, text="−", width=2, command=self._on_delete)
+        self.del_btn = ttk.Button(self.frame, text="🗑️", width=2, style="Trash.TButton",
+                                 command=self._on_delete)
         self.mode_cb = ttk.Combobox(self.frame, state="readonly", width=16,
                                     values=list(COMPRESS_MODES.keys()))
         try:
@@ -1871,9 +1953,13 @@ class CompressRow:
         self._win_restart = self._cv.create_window(0, 15, window=self.restart_btn, anchor="e")
         self._win_del = self._cv.create_window(0, 15, window=self.del_btn, anchor="e")
         self._win_mode = self._cv.create_window(0, 15, window=self.mode_cb, anchor="e")
+        self.pin_btn = ttk.Button(self.frame, text="⬆", width=2, command=self._on_pin)
+        self._win_pin = self._cv.create_window(0, 15, window=self.pin_btn, anchor="e")
+        self._pin_shown = False
         self._stop_shown = False
         self._restart_shown = False
         self._cv.itemconfigure(self._win_stop, state="hidden")   # 默认隐藏；压缩中显示
+        self._cv.itemconfigure(self._win_pin, state="hidden")    # 默认隐藏；排队中显示
         # 行本身也注册文件拖放：拖到任一行上都能把文件排入队尾（容器级注册会被行控件挡住）
         if _HAVE_DND:
             try:
@@ -1886,14 +1972,59 @@ class CompressRow:
         # 文件名：双击打开视频；右键打开/打开所在文件夹（执行态仅打开文件夹）
         self._cv.bind("<Double-1>", self._on_dbl)
         self._cv.bind("<Button-3>", self._on_rclick)
+        # 悬停文件名区域：tooltip 显示完整文件名（视觉裁剪不影响看全名）
+        self._tip = None
+        self._tip_text = ""
+        self._cv.bind("<Motion>", self._on_motion_tip)
+        self._cv.bind("<Leave>", self._hide_tip)
+        # 置顶/删除按钮 tooltip
+        bind_tooltip(self.pin_btn, "置顶", self.app.root)
+        bind_tooltip(self.del_btn, "删除", self.app.root)
+
+    def _on_motion_tip(self, e):
+        try:
+            bb = self._cv.bbox(self._txt_name)
+            if bb and bb[0] <= e.x <= bb[2] and bb[1] <= e.y <= bb[3]:
+                self._show_tip(os.path.basename(self.rec["path"]))
+            else:
+                self._hide_tip()
+        except Exception:
+            pass
+
+    def _show_tip(self, text):
+        try:
+            if self._tip is not None and self._tip.winfo_exists() and self._tip_text == text:
+                return
+            self._hide_tip()
+            self._tip_text = text
+            tip = tk.Toplevel(self.app.root)
+            tip.overrideredirect(True)
+            x = self._cv.winfo_rootx() + 6
+            y = self._cv.winfo_rooty() - 26
+            tip.geometry(f"+{x}+{y}")
+            tk.Label(tip, text=text, bg="#fff8dc", fg="#333",
+                     font=("Microsoft YaHei", 9), padx=10, pady=4).pack()
+            self._tip = tip
+        except Exception:
+            pass
+
+    def _hide_tip(self, _e=None):
+        try:
+            if self._tip is not None:
+                self._tip.destroy()
+                self._tip = None
+        except Exception:
+            self._tip = None
 
     def _hit_name(self, e):
-        """事件坐标是否落在文件名文字上"""
+        """事件坐标是否落在文件名列区域（A 列全宽、行高内；不只限文字 bbox，双击/右键更易命中）"""
         try:
             bb = self._cv.bbox(self._txt_name)
             if not bb:
                 return False
-            return bb[0] <= e.x <= bb[2] and bb[1] <= e.y <= bb[3]
+            sz = self._cv.bbox(self._txt_size)
+            right = (sz[0] - 4) if sz else (bb[2] + 40)   # A 列右界 = 大小列左缘 - 4
+            return 0 <= e.x <= right and bb[1] - 4 <= e.y <= bb[3] + 4
         except Exception:
             return False
 
@@ -1906,6 +2037,25 @@ class CompressRow:
                 return out
         p = r.get("path")
         return p if p and os.path.exists(p) else None
+
+    def _on_pin(self):
+        """一键置顶：排队任务移到等待队列最上面（执行态之后的第一位）"""
+        try:
+            r = self.rec
+            if r.get("state") != "queued":
+                return
+            tasks = self.app.cqueue.tasks
+            if r not in tasks:
+                return
+            tasks.remove(r)
+            j = 0
+            while j < len(tasks) and tasks[j].get("state") != "queued":
+                j += 1
+            tasks.insert(j, r)
+            self.app.log(f"已置顶：{os.path.basename(r['path'])}")
+            self.app._relayout_compress_rows()
+        except Exception:
+            pass
 
     def _on_dbl(self, e):
         """双击文件名：结束态打开视频文件；执行态无动作"""
@@ -1967,29 +2117,61 @@ class CompressRow:
         self._paint_cv()
 
     def _layout(self):
-        """右侧组从右往左：模式下拉、删除、终止(显示时)、状态文字、百分比文字"""
+        """固定列宽布局：A 文件名（弹性、超长裁剪）| B 大小（固定 110）| C 状态区（固定 150，含 ETA/百分比）| 右侧按钮组（锚定最右）
+        列宽恒定、位置只随按钮组（终止/重压出现时）整体微移，绝不因文件名长度或文字变化把后一列往右怼"""
         try:
             W = self._cv.winfo_width()
             if W <= 20:
                 return
             y = 15
             x = W - 6
-            # 用请求宽度而非实际宽度：新行首帧控件未布局时 winfo_width 可能=1，导致删除按钮与下拉重叠
-            self._cv.coords(self._win_mode, x, y); x -= self.mode_cb.winfo_reqwidth() + 6
+            # 右侧按钮组：从右往左，锚定最右
+            # 右侧组（从右往左）：删除(最右) → 模式下拉 → 置顶(排队) → 重新压缩(结束态) → 终止(压缩中)
             self._cv.coords(self._win_del, x, y); x -= self.del_btn.winfo_reqwidth() + 6
+            self._cv.coords(self._win_mode, x, y); x -= self.mode_cb.winfo_reqwidth() + 6
+            if self._pin_shown:
+                self._cv.coords(self._win_pin, x, y); x -= self.pin_btn.winfo_reqwidth() + 6
             if self._restart_shown:
                 self._cv.coords(self._win_restart, x, y); x -= self.restart_btn.winfo_reqwidth() + 6
             if self._stop_shown:
                 self._cv.coords(self._win_stop, x, y); x -= self.stop_btn.winfo_reqwidth() + 6
-            self._cv.coords(self._txt_state, x - 6, y)
-            bb = self._cv.bbox(self._txt_state)
-            if bb:
-                x -= (bb[2] - bb[0]) + 12
-            self._cv.coords(self._txt_eta, x, y)
-            bb = self._cv.bbox(self._txt_eta)
-            if bb:
-                x -= (bb[2] - bb[0]) + 12
-            self._cv.coords(self._txt_pct, x, y)
+            # C 列（状态区）：右缘 = 按钮组左缘 - 10，固定宽 175（容纳长 ETA，防百分比/ETA 重叠）
+            C_W = 175
+            c_right = x - 10
+            c_left = c_right - C_W
+            self._cv.coords(self._txt_state, c_right, y)         # 状态最右
+            self._cv.coords(self._txt_eta, c_right - 60, y)      # ETA 在状态左侧 60px
+            # 百分比右缘动态跟随 ETA 左缘（-8px），长 ETA 也不重叠；保底不越 C 区左缘
+            _ebb = self._cv.bbox(self._txt_eta)
+            if _ebb:
+                self._cv.coords(self._txt_pct, max(c_left + 10, _ebb[0] - 8), y)
+            else:
+                self._cv.coords(self._txt_pct, c_right - 105, y)
+            # B 列（大小）：固定宽 80（"841.7MB" 约 60px 留余量，让空间给 C 区）
+            B_W = 80
+            b_left = c_left - B_W - 12
+            self._cv.coords(self._txt_size, b_left, y)          # anchor=w：左缘定位
+            # A 列（文件名）：锚点 6，右缘 = B 列左缘 - 6 的 2/3（用户反馈 1/2 太窄空隙大，加宽 1/3 回 2/3）；
+            # 超长按像素硬切断显示（Excel 式，不换行、无省略号）
+            avail = max(60, int((b_left - 12) * 2 / 3))
+            try:
+                f = tkfont.nametofont("TkDefaultFont")
+                if f.measure(self._full_name) > avail:
+                    lo, hi = 0, len(self._full_name)
+                    while lo < hi:
+                        mid = (lo + hi + 1) // 2
+                        if f.measure(self._full_name[:mid]) <= avail:
+                            lo = mid
+                        else:
+                            hi = mid - 1
+                    self._cv.itemconfigure(self._txt_name, text=self._full_name[:lo])
+                else:
+                    self._cv.itemconfigure(self._txt_name, text=self._full_name)
+            except Exception:
+                self._cv.itemconfigure(self._txt_name, text=self._full_name)
+            # z 序：文件名永远高于右侧文字列（重叠时文件名盖住它们，反之不然）
+            self._cv.tag_raise(self._txt_name)
+            self._cv.tag_lower("rinfo")
         except Exception:
             pass
 
@@ -2006,8 +2188,8 @@ class CompressRow:
         if s != "compressing":
             return
         try:
-            # 100% = 淡蓝矩形覆盖到右侧按钮组左缘（压缩中=终止按钮左缘），不覆盖任何按钮
-            right = self.stop_btn.winfo_x() if self._stop_shown else self.del_btn.winfo_x()
+            # 100% = 淡蓝矩形覆盖到终止按钮左缘（压缩中的任务），不覆盖任何按钮
+            right = self.stop_btn.winfo_x()
         except Exception:
             right = 0
         if right <= 0:
@@ -2016,6 +2198,7 @@ class CompressRow:
         self._cv.create_rectangle(0, 0, right, h, fill=ROW_BG, outline="", tags="bg")
         if p > 0:
             self._cv.create_rectangle(0, 0, max(1, int(right * p)), h, fill=ROW_BG_ACTIVE, outline="", tags="bg")
+        self._cv.tag_lower("bg")   # 底色永远在最底层
         self._cv.tag_lower("bg")   # 背景矩形垫到最底层，避免盖住文字/控件（此前压缩开始后文件名被盖成空白）
 
     def _draw_bar(self):
@@ -2035,7 +2218,7 @@ class CompressRow:
     def refresh(self):
         r = self.rec
         s = r["state"]
-        self._cv.itemconfig(self._txt_name, text=os.path.basename(r["path"]))
+        self._cv.itemconfig(self._txt_name, text=self._full_name)
         try:
             in_size = os.path.getsize(r["path"])
         except Exception:
@@ -2088,6 +2271,15 @@ class CompressRow:
             else:
                 self.mode_cb.config(state="readonly")
                 self.del_btn.config(state="normal")
+        # 置顶按钮：仅排队行显示
+        if s == "queued":
+            if not self._pin_shown:
+                self._pin_shown = True
+                self._cv.itemconfigure(self._win_pin, state="normal")
+        else:
+            if self._pin_shown:
+                self._pin_shown = False
+                self._cv.itemconfigure(self._win_pin, state="hidden")
         self._layout()
         try:
             self._cv.update_idletasks()   # create_window 移动后刷新 winfo 坐标，right 才能对齐
@@ -2127,20 +2319,20 @@ class CompressRow:
             self.app.cqueue.remove(r)
             self.frame.destroy()
             self.app.log(f"已终止并从压缩队列移除：{os.path.basename(r['path'])}")
-            return
-        # 结束态/排队：只移出列表，不删除任何文件
-        if self.app.cqueue.remove(r):
-            self.frame.destroy()
-            self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
-            return
-        if self.app.cqueue.remove(r):
-            self.frame.destroy()
-            self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
+        else:
+            # 结束态/排队：只移出列表，不删除任何文件
+            if self.app.cqueue.remove(r):
+                self.frame.destroy()
+                self.app.log(f"已从压缩队列移除：{os.path.basename(r['path'])}")
+        self.app._relayout_compress_rows()   # place 布局不自动补位，删除后必须重排
 class App:
     def __init__(self, root):
         self.root = root
         root.title("eazyVid 视频下载压缩工具")
         root.geometry("980x820")
+        # 垃圾桶删除按钮：emoji 🗑️ + width=2（强制 2 字符宽，防异常测量）+ padding=(3,1) → 28x27 正方
+        _st = ttk.Style()
+        _st.configure("Trash.TButton", padding=(3, 1))
         self._cleanup_stale_tmpdirs()
         self.q = queue.Queue()
         self.sniffer = None
@@ -2163,7 +2355,9 @@ class App:
         self._load_compress_settings()
         self._build_ui()
         self._start_capture_server()
+        self._page = "dl"
         root.after(100, self._poll_queue)
+        root.after(500, self._tab_tick)
 
     def _on_exit(self):
         """退出清理：任务进行中 → 确认弹窗 + 杀进程树（下载 yt-dlp / 压缩 ffmpeg）；关闭嗅探 Chrome。"""
@@ -2196,7 +2390,7 @@ class App:
             try:
                 d = self.cqueue.out_dir or os.path.dirname(r["path"]) or "."
                 stem = os.path.splitext(os.path.basename(r["path"]))[0]
-                cands = [os.path.join(d, f"{stem}_压缩.mp4"), r.get("out")]
+                cands = [os.path.join(d, f"{stem}_compressed.mp4"), r.get("out")]
                 for cand in cands:
                     if not cand:
                         continue
@@ -2336,11 +2530,25 @@ class App:
         # ---- 顶部固定：标题 + 功能选项卡 ----
         self._topbar = ttk.Frame(self.root)
         self._topbar.pack(fill="x", **pad)
-        ttk.Label(self._topbar, text="eazyVid", font=("", 12, "bold")).pack(side="left", padx=4)
-        self._tab_dl = ttk.Button(self._topbar, text="● 视频下载", width=12, command=lambda: self._show_page("dl"))
-        self._tab_dl.pack(side="left", padx=6)
-        self._tab_cp = ttk.Button(self._topbar, text="○ 视频压缩", width=12, command=lambda: self._show_page("cp"))
-        self._tab_cp.pack(side="left", padx=6)
+        ttk.Label(self._topbar, text="eazyVid", font=("", 14, "bold")).pack(side="left", padx=4)
+        _tb_bg = ttk.Style().lookup("TFrame", "background")
+        def _round_rect(c, x1, y1, x2, y2, r, **kw):
+            """Canvas 圆角矩形（smooth 多边形近似）"""
+            pts = (x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
+                   x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y1+r, x1, y1)
+            return c.create_polygon(pts, smooth=True, **kw)
+        self._round_rect = _round_rect   # 供指示器重绘卡片时调用
+
+        def _mk_tab(text, cmd):
+            """平滑圆角卡片式 tab：Canvas 整体绘制（卡片底 + 圆点 + 文字），无凸起边框"""
+            c = tk.Canvas(self._topbar, width=118, height=36, bg=_tb_bg,
+                          highlightthickness=0, cursor="hand2")
+            c.pack(side="left", padx=4, pady=2)
+            c.bind("<Button-1>", lambda _e: cmd())
+            c.text = text
+            return c
+        self._tab_dl = _mk_tab("视频下载", lambda: self._show_page("dl"))
+        self._tab_cp = _mk_tab("视频压缩", lambda: self._show_page("cp"))
         self._gear_btn = ttk.Button(self._topbar, text="⚙", width=3, command=self._open_settings)
         self._gear_btn.pack(side="left", padx=2)
 
@@ -2365,7 +2573,7 @@ class App:
         self.url_entry.bind("<Control-v>", self._paste_url_extract)
         self.url_entry.bind("<<Paste>>", self._paste_url_extract)
         self.url_entry.bind("<Return>", lambda _e: self.on_probe())   # 粘贴完直接回车探测
-        ttk.Button(top, text="粘贴", command=lambda: self._paste_url_extract()).pack(side="left", padx=2)
+        ttk.Button(top, text="粘贴", width=4, command=lambda: self._paste_url_extract()).pack(side="left", padx=2)
         ttk.Button(top, text="探测格式", command=self.on_probe).pack(side="left", padx=2)
         self._probe_bar = ttk.Progressbar(top, mode="indeterminate", length=120)
         self._probe_bar.pack_forget()
@@ -2427,7 +2635,7 @@ class App:
         self._cp_canvas.pack(side="left", fill="both", expand=True)
         sb2.pack(side="right", fill="y")
         ttk.Label(self._cp_page,
-                  text="模式说明：x265 默认≈体积减半画质不变；高画质最接近原片；小体积最省空间；NVENC 用显卡编码最快。",
+                  text="模式说明：x265 默认≈体积减半画质不变；高画质最接近原片；小体积最省空间。",
                   foreground="#666").pack(anchor="w", padx=8)
 
         # 默认显示下载页
@@ -2438,6 +2646,16 @@ class App:
         self._bottom_bar.pack(fill="x", **pad)
         self._log_btn = ttk.Button(self._bottom_bar, text="▸ 日志（调试）", command=self._toggle_log)
         self._log_btn.pack(anchor="w")
+        # 右下角：所有任务结束后关机开关
+        self._shutdown_after = False
+        self._shutdown_fired = False
+        self._had_tasks = False
+        self._shutdown_lbl = ttk.Label(self._bottom_bar, text="所有任务结束后关机",
+                                        font=("Microsoft YaHei", 8), foreground="#666")
+        self._shutdown_toggle = ToggleSwitch(self._bottom_bar, on_toggle=self._on_shutdown_toggle,
+                                             w=34, h=18)
+        self._shutdown_lbl.pack(side="right", padx=(6, 4))
+        self._shutdown_toggle.pack(side="right", padx=(0, 8))
         self.log_text = tk.Text(self._bottom_bar, height=7, state="disabled", wrap="word")
         self.logfile = os.path.join(SCRIPT_DIR, "eazyvid.log")
         try:
@@ -2451,14 +2669,53 @@ class App:
         """切换下载页/压缩页（top bar 与 bottom 不动）"""
         for w in (self._dl_page, self._cp_page):
             w.pack_forget()
+        self._page = name
         if name == "cp":
             self._cp_page.pack(fill="both", expand=True)
-            self._tab_dl.config(text="○ 视频下载")
-            self._tab_cp.config(text="● 视频压缩")
         else:
             self._dl_page.pack(fill="both", expand=True)
-            self._tab_dl.config(text="● 视频下载")
-            self._tab_cp.config(text="○ 视频压缩")
+        self._update_tab_indicators()
+
+    def _update_tab_indicators(self):
+        """版面 tab 卡片状态灯：圆角卡片底色 + 圆点状态色（文字固定黑色）。
+        当前页=淡蓝卡片+黑圆点；非当前页：失败=持续黄●，有任务在跑=绿色呼吸，空闲=灰○。"""
+        try:
+            dl_fail = any(t.state == "failed" for t in self.pool.tasks)
+            dl_busy = any(t.state == "downloading" for t in self.pool.tasks)
+            cp_fail = any(t.get("state") == "failed" for t in self.cqueue.tasks)
+            cp_busy = any(t.get("state") == "compressing" for t in self.cqueue.tasks)
+            # 呼吸相位：2 秒一周期，正弦平滑（#00A86B ↔ #9FE0C8）
+            k = (math.sin(time.time() * math.pi) + 1) / 2
+            r = int(0 + (159 - 0) * k); g = int(168 + (224 - 168) * k); b = int(107 + (200 - 107) * k)
+            breathe = f"#{r:02x}{g:02x}{b:02x}"
+            card_sel, card_idle = "#E9EEFF", "#EDEFF2"   # 选中=淡蓝卡片，空闲=浅灰卡片
+            for name, tab, fail, busy in (("dl", self._tab_dl, dl_fail, dl_busy),
+                                          ("cp", self._tab_cp, cp_fail, cp_busy)):
+                tab.delete("all")
+                w, h = int(tab["width"]), int(tab["height"])
+                fill = card_sel if self._page == name else card_idle
+                self._round_rect(tab, 1, 1, w - 1, h - 1, 9, fill=fill, outline="")
+                cx, cy = 17, h // 2
+                if self._page == name:
+                    tab.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, fill="#111111", outline="")
+                elif fail:
+                    tab.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, fill="#E8B800", outline="")
+                elif busy:
+                    tab.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, fill=breathe, outline="")
+                else:
+                    tab.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, outline="#9AA0A6", width=2)
+                tab.create_text(w // 2 + 9, cy, text=tab.text, fill="#111111",
+                                font=("Microsoft YaHei UI", 11))
+        except Exception:
+            pass
+
+    def _tab_tick(self):
+        """100ms 驱动 tab 卡片状态灯（呼吸平滑）"""
+        try:
+            self._update_tab_indicators()
+        except Exception:
+            pass
+        self.root.after(100, self._tab_tick)
 
     def _center_window(self, win, w, h):
         """弹窗对齐到主面板中心"""
@@ -2726,6 +2983,36 @@ class App:
         except Exception:
             pass
 
+    def _on_shutdown_toggle(self, on):
+        """开关回调：开启后，从有任务到任务清空即自动关机（刚开启时无任务不触发）"""
+        self._shutdown_after = on
+        self._had_tasks = False
+        self.log("已开启：所有任务结束后自动关机" if on else "已取消：自动关机")
+
+    def _do_shutdown(self):
+        """所有任务已空 → 60 秒倒计时关机（可取消）"""
+        if self._shutdown_fired:
+            return
+        self._shutdown_fired = True
+        self.log("所有任务已完成，系统将在 60 秒后关机…")
+        try:
+            subprocess.Popen(["shutdown", "/s", "/t", "60"])
+        except Exception as e:
+            self.log(f"关机指令失败：{e}")
+            self._shutdown_fired = False
+            return
+        try:
+            if messagebox.askyesno("自动关机",
+                    "所有任务已完成，系统将在 60 秒后关机。\n是否取消本次关机？",
+                    parent=self.root):
+                subprocess.Popen(["shutdown", "/a"])
+                self._shutdown_fired = False
+                self._shutdown_after = False
+                self._shutdown_toggle.set_on(False)
+                self.log("已取消自动关机")
+        except Exception:
+            pass
+
     def _toggle_log(self):
         if self.log_visible:
             self.log_text.pack_forget()
@@ -2802,9 +3089,21 @@ class App:
                         self._reorder_compress_rows()
                         self._relayout_compress_rows()
                     if kind == "cdone":
-                        tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
-                        self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
+                        if rec.get("state") == "skipped":
+                            self.log(f"压缩收益小，已保留原文件：{os.path.basename(rec['path'])}")
+                        else:
+                            tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
+                            self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
         except queue.Empty:
+            pass
+        # 自动关机：开关 ON 时，先标记"出现过任务"，任务清空后再触发（刚开无任务不触发）
+        try:
+            if getattr(self, "_shutdown_after", False):
+                if self.pool.tasks or self.cqueue.tasks:
+                    self._had_tasks = True
+                elif self._had_tasks:
+                    self._do_shutdown()
+        except Exception:
             pass
         self.root.after(100, self._poll_queue)
 
@@ -3388,6 +3687,8 @@ class App:
             if kind == "cdone":
                 if rec.get("state") == "stopped":
                     self.log(f"压缩已停止：{os.path.basename(rec['path'])}")
+                elif rec.get("state") == "skipped":
+                    self.log(f"压缩收益小，已保留原文件：{os.path.basename(rec['path'])}")
                 else:
                     tail = f" → {os.path.basename(rec['out'])}" if rec.get("ok") and rec.get("out") else ""
                     self.log(f"压缩{'成功' if rec.get('ok') else '失败'}：{os.path.basename(rec['path'])}{tail}")
