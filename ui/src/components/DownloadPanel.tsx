@@ -239,6 +239,7 @@ export function DownloadPanel({
   /* 行右键：已完成 = 打开文件 + 打开所在目录；其余 = 打开所在目录 */
   const openCtx = (e: React.MouseEvent, t: DlTask) => {
     e.preventDefault();
+    e.stopPropagation(); // 阻止冒泡到 window（否则同一次右键会把刚渲染的菜单秒关）
     setCtx({ x: e.clientX, y: e.clientY, t });
   };
   const ctxItems = (): CtxItem[] => {

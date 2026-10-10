@@ -235,6 +235,7 @@ export function CompressPanel({
   const openCtx = (e: React.MouseEvent, t: CmpTask) => {
     diag(`CTX open name=${t.name} btn=${e.button} type=${e.type}`);
     e.preventDefault();
+    e.stopPropagation(); // 阻止冒泡到 window（否则同一次右键会把刚渲染的菜单秒关）
     setCtx({ x: e.clientX, y: e.clientY, t });
     diag(`CTX set x=${e.clientX} y=${e.clientY}`);
   };
