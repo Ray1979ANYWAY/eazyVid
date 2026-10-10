@@ -902,3 +902,8 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - **engine.rs stderr 落盘探针**：GUI 无 console，spawn 错误/stderr 写入 tmp/engine_spawn_err.txt、tmp/engine_stderr.txt 便于调试。
 - **验证**：管道直测全通——cmp_add → {id:2, ok:true, cmp_id:1} → started(orig:82851) → compressing(pct:85/100, pos:0:04/0:05, eta:0.75) → done(outSize:80932, ratio:2.3)，5 秒测试视频 fast 模式 ~1 秒压完；tsc 全绿；cargo build 通过；ui.exe 重启后引擎进程带 -X utf8 spawn 正常。
 - **遗留**：设置面板 overwrite/cover_sec 仍硬编码兜底（out_dir:null/cover_sec:null/overwrite:false 传引擎）；"所有任务结束后关机"开关纯 UI 无逻辑；压缩 Worker 任务完成不自动补位（当前手动点按钮批量启动）。
+### 2026-10-10 迭代（侧栏状态灯接真实任务状态）
+- 原实现为 mock：隐藏面板恒 busy（永远闪绿）、选中面板恒 active（黑）。改为**两个面板各自独立上报活动状态**：DownloadPanel/CompressPanel 加 `onActivityChange(busy, fail)`（useRef 稳定回调，tasks 变化时上报）。
+- 判定：下载 busy = downloading/merging，fail = failed；压缩 busy = running，fail = failed/skipped。
+- App 圆点优先级：**fail（黄，持续）> busy（绿，呼吸闪）> 选中（黑）/未选中（灰）**——无论面板是否选中，只要有任务运行就闪绿、有失败就黄；选中指示靠按钮底色（bg-white/15），不再被 mock 黑点占用。
+- tsc 全绿；vite HMR 即时生效。

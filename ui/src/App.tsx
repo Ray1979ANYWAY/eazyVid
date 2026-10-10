@@ -16,9 +16,13 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({ dlWorkers: 3, compressWorkers: 3 });
 
-  // mock 状态灯：当前面板黑色；隐藏面板有任务运行=绿闪，有失败=黄
-  const dlDot = panel === "download" ? "active" : "busy";
-  const cmpDot = panel === "compress" ? "active" : "busy";
+  // 面板活动状态（面板组件上报）：有运行任务=绿闪、有失败=黄，与选中状态无关
+  const [dlAct, setDlAct] = useState({ busy: false, fail: false });
+  const [cmpAct, setCmpAct] = useState({ busy: false, fail: false });
+  const dotOf = (act: { busy: boolean; fail: boolean }, selected: boolean) =>
+    act.fail ? "fail" : act.busy ? "busy" : selected ? "active" : "idle";
+  const dlDot = dotOf(dlAct, panel === "download");
+  const cmpDot = dotOf(cmpAct, panel === "compress");
 
   return (
     <TipProvider>
@@ -33,9 +37,9 @@ function App() {
         />
         <main className="flex-1 min-w-0 min-h-0 pt-11">
           {panel === "download" ? (
-            <DownloadPanel dlWorkers={settings.dlWorkers} />
+            <DownloadPanel dlWorkers={settings.dlWorkers} onActivityChange={(b, f) => setDlAct({ busy: b, fail: f })} />
           ) : (
-            <CompressPanel compressWorkers={settings.compressWorkers} />
+            <CompressPanel compressWorkers={settings.compressWorkers} onActivityChange={(b, f) => setCmpAct({ busy: b, fail: f })} />
           )}
         </main>
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip } from "./ui";
 import { COMPRESS_MODES, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
@@ -187,7 +187,13 @@ function CmpRow({
 }
 
 /* ============ 压缩面板 ============ */
-export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: number }) {
+export function CompressPanel({
+  compressWorkers = 3,
+  onActivityChange,
+}: {
+  compressWorkers?: number;
+  onActivityChange?: (busy: boolean, fail: boolean) => void;
+}) {
   const [tasks, setTasks] = useState<CmpTask[]>([]);
   const [defMode, setDefMode] = useState("default");
   const [shutdown, setShutdown] = useState(false);
@@ -195,6 +201,15 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
   const [busy, setBusy] = useState(false);
   const engine = useEngine();
   const show = useTip();
+
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄） */
+  const actRef = useRef(onActivityChange);
+  actRef.current = onActivityChange;
+  useEffect(() => {
+    const running = tasks.some((t) => t.status === "running");
+    const fail = tasks.some((t) => t.status === "failed" || t.status === "skipped");
+    actRef.current?.(running, fail);
+  }, [tasks]);
 
   const move = (id: string, fn: (t: CmpTask) => CmpTask) =>
     setTasks((prev) => prev.map((t) => (t.id === id ? fn(t) : t)));

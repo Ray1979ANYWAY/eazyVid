@@ -208,7 +208,13 @@ function DlRow({
 }
 
 /* ============ 下载面板 ============ */
-export function DownloadPanel({ dlWorkers = 3 }: { dlWorkers?: number }) {
+export function DownloadPanel({
+  dlWorkers = 3,
+  onActivityChange,
+}: {
+  dlWorkers?: number;
+  onActivityChange?: (busy: boolean, fail: boolean) => void;
+}) {
   const [url, setUrl] = useState("");
   const [probeState, setProbeState] = useState<"idle" | "probing" | "done">("idle");
   const [formats, setFormats] = useState<DlFormat[]>([]);
@@ -374,6 +380,15 @@ export function DownloadPanel({ dlWorkers = 3 }: { dlWorkers?: number }) {
   };
 
   const doneCount = useMemo(() => tasks.filter((t) => t.status === "done").length, [tasks]);
+
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄） */
+  const actRef = useRef(onActivityChange);
+  actRef.current = onActivityChange;
+  useEffect(() => {
+    const busy = tasks.some((t) => t.status === "downloading" || t.status === "merging");
+    const fail = tasks.some((t) => t.status === "failed");
+    actRef.current?.(busy, fail);
+  }, [tasks]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
