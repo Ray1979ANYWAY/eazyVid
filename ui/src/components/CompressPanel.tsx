@@ -75,7 +75,7 @@ function CmpRow({
         />
       )}
 
-      <div className="relative grid grid-cols-[1fr_110px_1fr_130px_110px_80px_36px] items-center h-[52px] px-3 gap-2">
+      <div className="relative grid grid-cols-[1fr_90px_1fr_130px_96px] items-center h-[52px] px-3 gap-2">
         {/* 状态 + 文件名 */}
         <div className="min-w-0" onMouseEnter={(e) => show(e.currentTarget, t.name)}>
           <div className="text-[13px] text-text-main truncate">{t.name}</div>
@@ -124,7 +124,7 @@ function CmpRow({
           )}
         </div>
 
-        {/* 操作 */}
+        {/* 操作（贴最右） */}
         <div className="flex items-center justify-end gap-1">
           {isRunning && (
             <IconBtn tip="终止压缩（无法从断点继续）" onClick={() => onStop(t)} className="hover:text-danger hover:bg-danger/10">
@@ -145,9 +145,6 @@ function CmpRow({
             <Icon d="M3 6h18M8 6V4h8v2m1 0 1 14H6L5 6m5 5v6m4-6v6" size={18} />
           </IconBtn>
         </div>
-
-        {/* 占位（保持列宽对齐） */}
-        <div className="w-[2px]" />
       </div>
     </>
   );
@@ -235,7 +232,15 @@ export function CompressPanel({
       return arr;
     });
 
-  const remove = (id: string) => setTasks((prev) => prev.filter((t) => t.id !== id));
+  const remove = (id: string) => {
+    /* 删除运行中任务：先杀引擎进程（含删半成品输出），再移出列表；
+       已完成/排队等其余状态仅移出列表（保留输出文件） */
+    const t = tasks.find((x) => x.id === id);
+    if (t && t.status === "running" && t.cmpId != null) {
+      engine.call("cmp_stop", { id: t.cmpId });
+    }
+    setTasks((prev) => prev.filter((x) => x.id !== id));
+  };
 
   const appendTasks = (items: { path: string; name: string }[]) =>
     setTasks((prev) => [

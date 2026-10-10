@@ -925,3 +925,12 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
   - CompressPanel cmp_add 传真实值：out_dir = outSame?null:(outDir||null)；cover_sec = (overwrite&&cover)?coverSec:null；overwrite = overwrite&&outSame。引擎侧 _compress_worker 语义确认（out_dir None=同目录、cover_sec None=不设封面、overwrite done 后 os.replace 覆盖含扩展名）。
   - 联动保持：overwrite 仅 outSame 可开；cover 仅 overwrite 可开；coverSec NumberField 支持 0（首帧）。
 - tsc 全绿；HMR 即时生效。
+### 2026-10-10 迭代（删除压缩任务杀进程 + 行控件靠右）
+- 根因：CompressPanel remove() 只 setTasks(filter) 移出 UI 行，从未调 cmp_stop → 删除运行中任务后引擎 ffmpeg 继续跑（用户实机反馈"删除了进程也没停"）。
+- 修复：
+  - 前端 remove()：若任务 running 且有 cmpId，先 engine.call("cmp_stop") 再移出列表；其余状态仅移出列表（保留输出文件，遵循"压缩版删除只移出列表"规则）。
+  - 引擎 _cmd_cmp_stop：kill 进程树后删除该任务半成品输出（rec 记录 out_path，命名与 compress_video 对齐 _compressed.mp4），符合"终止即删半成品"用户规则。
+  - 行布局 grid-cols 7 列 → 5 列 [1fr_90px_1fr_130px_96px]：去掉操作按钮右侧多余空列（80px+36px），模式下拉+操作按钮整体贴最右。
+- 实测：用户残留的 BLACKED ffmpeg（CPU 682s 满载）已终止，12.8MB 半成品已删。
+- 注意：引擎改动需重启 ui.exe 生效（前端 HMR 即时生效，但 cmp_stop 删半成品依赖新引擎）。
+- tsc 全绿。

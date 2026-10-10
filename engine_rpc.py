@@ -190,6 +190,10 @@ def _compress_worker(req, rec):
     cover_sec = req.get("cover_sec")
     overwrite = req.get("overwrite", False)
 
+    # 记录输出路径供 cmp_stop 清理半成品（与 compress_video 命名对齐）
+    rec["out_path"] = os.path.join(out_dir or os.path.dirname(path),
+                                   os.path.basename(os.path.splitext(path)[0]) + "_compressed.mp4")
+
     # started：先报原大小（UI 运行中显示）
     try:
         orig = os.path.getsize(path)
@@ -272,6 +276,13 @@ def _cmd_cmp_stop(req):
         rec = _cmp_running.get(req.get("id"))
     if rec and rec.get("proc") is not None:
         eazyvid._kill_proc_tree(rec["proc"])
+        # 终止即删半成品输出（用户规则：终止任务应删除压缩一半的文件）
+        out = rec.get("out_path")
+        if out and os.path.exists(out):
+            try:
+                os.remove(out)
+            except OSError:
+                pass
         emit({"ev": "cmp", "id": req.get("id"), "state": "stopped", "mode": req.get("mode", "")})
         reply(req["id"], ok=True)
         return
