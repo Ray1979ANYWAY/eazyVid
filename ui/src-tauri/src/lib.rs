@@ -53,7 +53,9 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main(app),
                     "quit" => {
-                        // 先让前端检查进行中任务并弹确认（任务进行中必须警告），确认后 invoke quit_confirmed
+                        // 窗口可能已隐藏（关闭进托盘），先恢复再问前端，否则警告弹窗看不见
+                        show_main(app);
+                        // 前端检查进行中任务并弹确认，确认后 invoke quit_confirmed
                         let _ = app.emit("app:quit-request", ());
                     }
                     _ => {}

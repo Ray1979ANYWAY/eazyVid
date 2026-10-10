@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar, type Panel } from "./components/Sidebar";
@@ -65,16 +65,27 @@ function App() {
   const dlDot = dotOf(dlAct, panel === "download");
   const cmpDot = dotOf(cmpAct, panel === "compress");
 
-  /* 托盘"退出"：先检查进行中任务 → 有则弹确认（未完成任务文件将被删除），无则直接退出 */
+  /* 进行中任务总数：用 ref 让 quit-request 回调始终读最新值（避免因 effect 重跑残留旧监听） */
+  const runningRef = useRef(0);
+  runningRef.current = dlAct.running + cmpAct.running;
+
+  /* 托盘"退出"：先检查进行中任务 → 有则弹确认（未完成任务文件将被删除），无则直接退出。
+     监听只注册一次（空依赖），回调读 runningRef 最新值——防止旧闭包误判为 0 直接退出。 */
   useEffect(() => {
     let un: (() => void) | undefined;
-    listen("app:quit-request", () => {
-      const running = dlAct.running + cmpAct.running;
-      if (running > 0) setQuitWarn(true);
+    let cancelled = false;
+    listen<null>("app:quit-request", () => {
+      if (runningRef.current > 0) setQuitWarn(true);
       else void invoke("quit_confirmed");
-    }).then((f) => (un = f));
-    return () => un?.();
-  }, [dlAct.running, cmpAct.running]);
+    }).then((f) => {
+      if (cancelled) f();
+      else un = f;
+    });
+    return () => {
+      cancelled = true;
+      un?.();
+    };
+  }, []);
 
   const confirmQuit = () => {
     setQuitWarn(false);
