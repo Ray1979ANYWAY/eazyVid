@@ -29,9 +29,9 @@ function ensureListening() {
       return;
     }
     if (obj == null) return;
-    // 命令响应（带 id）
+    // 命令响应：带 id 且非事件（事件如 cmp/dl 的 id 是任务 id，不能当响应匹配）
     const id = obj.id as number | undefined;
-    if (id != null) {
+    if (id != null && obj.ev == null) {
       const p = pending.get(id);
       if (p) {
         pending.delete(id);

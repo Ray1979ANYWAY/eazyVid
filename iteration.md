@@ -934,3 +934,9 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 实测：用户残留的 BLACKED ffmpeg（CPU 682s 满载）已终止，12.8MB 半成品已删。
 - 注意：引擎改动需重启 ui.exe 生效（前端 HMR 即时生效，但 cmp_stop 删半成品依赖新引擎）。
 - tsc 全绿。
+### 2026-10-10 迭代（修复压缩进度恒 0%——useEngine 事件分发 bug）
+- 现象：CPU 满载压缩，但 UI 百分比恒 0%。
+- 排查链路：查进程/输出增长（正常）→ 管道直测引擎 + 真实 24 分钟长视频：compressing 事件正常发出（145 个事件，pct 0.7→2.2 连续爬升）→ 定位到前端 useEngine 分发。
+- 根因：useEngine 事件分发 `if (id != null)` 把**任何带 id 的 JSON** 都当命令响应处理；引擎 cmp 事件的 id 是压缩任务 id（非 RPC 请求 id）→ 被误判为响应 → pending 匹配不到 → **return 丢弃**，CompressPanel 监听器永远收不到 cmp 事件。下载事件用 task_id（非 id）不受影响 → 下载进度正常、压缩进度 0%。
+- 修复：响应判定收紧为 `id != null && obj.ev == null`——带 ev 的事件（cmp/dl/ready）一律走 listeners；无 ev 的纯响应才匹配 pending。
+- 验证：tsc 全绿。引擎行为已由直测证实正确，此修复为纯前端，HMR 即时生效。
