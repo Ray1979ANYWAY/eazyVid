@@ -1217,15 +1217,16 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
         if not os.path.exists(fp):
             fp = "ffprobe"
 
-        # 一次 ffprobe：时长 / 视频 pix_fmt / 视频编码 / 音频编码与码率
+        # 一次 ffprobe：时长 / 视频 pix_fmt / 视频编码 / 音频编码与码率 / 内嵌封面流
         duration = None
         pix_fmt = ""
         v_codec = ""
         v_br = 0          # 源视频码率（bps），用于压缩前预检
         a_codec, a_br = "", 0
+        cover_stream_pos = None   # 内嵌封面（attached_pic）在输入里的视频流位置（0-based）
         try:
             r = subprocess.run([fp, "-hide_banner", "-v", "error",
-                                "-show_entries", "stream=codec_type,codec_name,pix_fmt,bit_rate",
+                                "-show_entries", "stream=codec_type,codec_name,pix_fmt,bit_rate:stream_disposition=attached_pic",
                                 "-show_entries", "format=duration",
                                 "-of", "json", in_path],
                                capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1240,6 +1241,7 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                     v_br = int(info["format"].get("bit_rate") or 0)
                 except (TypeError, ValueError):
                     v_br = 0
+                v_pos = 0
                 for s in info.get("streams", []):
                     if s.get("codec_type") == "video":
                         if not v_codec:
@@ -1251,6 +1253,9 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                         except (TypeError, ValueError):
                             sv = 0
                         v_br = max(v_br, sv)
+                        if (s.get("disposition") or {}).get("attached_pic"):
+                            cover_stream_pos = v_pos   # 该封面流是输入里的第 v_pos+1 个视频流
+                        v_pos += 1
                     elif s.get("codec_type") == "audio":
                         a_codec = s.get("codec_name", "") or ""
                         try:
@@ -1265,6 +1270,12 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
         def _run(vargs):
             cmd = [ff, "-hide_banner", "-y", "-i", in_path,
                    "-map", "0:v:0", "-map", "0:a?"] + list(vargs)
+            # 不取帧且原视频带内嵌封面（attached_pic）→ 一并映射保留（copy 原图，disposition 置 attached_pic）
+            # 取帧模式用指定帧做封面，不沿用原封面
+            if cover_sec is None and cover_stream_pos is not None:
+                cmd += ["-map", f"0:v:{cover_stream_pos}",
+                        "-c:v:1", "copy",
+                        "-disposition:v:1", "attached_pic"]
             if a_codec in ("aac", "mp3", "ac3", "eac3") and 0 < a_br <= 192000:
                 cmd += ["-c:a", "copy"]            # 低码率音频原样复制，零损失
             else:
