@@ -17,6 +17,9 @@
 """
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -25,6 +28,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
 import eazyvid  # noqa: E402  （项目根模块：探测/下载/压缩引擎）
+
+NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW：不弹控制台窗口
 
 _lock = threading.Lock()
 _EVT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp", "engine_events.txt")
@@ -348,8 +353,8 @@ def _cmd_ffmpeg_check(req):
     latest = ""
     try:
         import urllib.request
-        req = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
-        html = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "replace")
+        hreq = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(hreq, timeout=10).read().decode("utf-8", "replace")
         vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
         if vers:
             latest = max(vers, key=_ver_key)
@@ -358,6 +363,88 @@ def _cmd_ffmpeg_check(req):
     # 本地是 nightly → 只要存在稳定版就提示；本地是稳定版 → 版本号严格更大才提示
     newer = bool(latest and ((cur_nightly and cur) or (cur and _ver_key(latest) > _ver_key(cur))))
     reply(req.get("id"), ok=True, current=cur, latest=latest, newer=newer, nightly=cur_nightly)
+
+
+def _cmd_ffmpeg_update(req):
+    """一键更新 ffmpeg 到最新稳定版（gyan.dev release-full.7z，Windows 官方推荐构建）：
+    下载（带进度事件）→ Windows 自带 bsdtar 解 7z → 备份旧版 → 替换 → 验证版本 → 清理临时文件。
+    任一步失败：恢复旧版备份并清理临时目录，返回错误。"""
+    script = eazyvid.SCRIPT_DIR
+    tmp = os.path.join(script, "ffmpeg_update_tmp")
+    FF_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z"
+    try:
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp, exist_ok=True)
+
+        # 1. 下载（带进度事件）
+        emit({"ev": "ffmpeg_progress", "stage": "download", "percent": 0})
+        import urllib.request
+        hreq = urllib.request.Request(FF_URL, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(hreq, timeout=30)
+        total = int(resp.headers.get("Content-Length") or 0)
+        got = 0
+        dst = os.path.join(tmp, "ffmpeg.7z")
+        with open(dst, "wb") as f:
+            while True:
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    emit({"ev": "ffmpeg_progress", "stage": "download",
+                          "percent": min(99, int(got * 100 / total))})
+
+        # 2. 解压（Windows 10+ 自带 bsdtar 支持 7z）
+        emit({"ev": "ffmpeg_progress", "stage": "extract", "percent": 100})
+        ex = os.path.join(tmp, "x")
+        os.makedirs(ex, exist_ok=True)
+        subprocess.run(["tar", "-xf", dst, "-C", ex], timeout=600,
+                       creationflags=NO_WINDOW | 0x00004000, check=True)
+
+        # 3. 定位新构建的 bin 目录
+        new_bin = None
+        for root, dirs, files in os.walk(ex):
+            if "ffmpeg.exe" in files and os.path.basename(root) == "bin":
+                new_bin = root
+                break
+        if not new_bin:
+            raise RuntimeError("解压内容中未找到 bin/ffmpeg.exe")
+
+        # 4. 备份旧版 → 替换 → 失败则回滚备份
+        for name in ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe"):
+            src = os.path.join(new_bin, name)
+            if not os.path.exists(src):
+                continue
+            dst2 = os.path.join(script, name)
+            bak = dst2 + ".old"
+            if os.path.exists(dst2):
+                os.replace(dst2, bak)
+            try:
+                shutil.copy2(src, dst2)
+            except Exception:
+                if os.path.exists(bak):
+                    os.replace(bak, dst2)
+                raise
+            if os.path.exists(bak):
+                os.remove(bak)
+
+        # 5. 验证新版本号
+        ver = ""
+        try:
+            r = subprocess.run([os.path.join(script, "ffmpeg.exe"), "-version"],
+                               capture_output=True, text=True, timeout=10,
+                               creationflags=NO_WINDOW | 0x00004000)
+            m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
+            ver = m.group(1) if m else ""
+        except Exception:
+            pass
+        shutil.rmtree(tmp, ignore_errors=True)
+        emit({"ev": "ffmpeg_progress", "stage": "done", "percent": 100})
+        reply(req.get("id"), ok=True, version=ver)
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        reply(req.get("id"), ok=False, error=f"更新失败: {e}")
 
 
 # ---------- 主循环 ----------
@@ -464,6 +551,8 @@ def main():
                 _cmd_cmp_scan_dir(req)
             elif cmd == "ffmpeg_check":
                 _cmd_ffmpeg_check(req)
+            elif cmd == "ffmpeg_update":
+                _cmd_ffmpeg_update(req)
             elif cmd == "quit":
                 _cmd_quit()
                 break

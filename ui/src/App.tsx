@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sidebar, type Panel } from "./components/Sidebar";
 import { DownloadPanel } from "./components/DownloadPanel";
 import { CompressPanel } from "./components/CompressPanel";
@@ -95,8 +94,12 @@ function App() {
   };
 
   /* 每次启动检查 ffmpeg 是否有新的稳定版（引擎就绪后一次） */
-  const { ready: engReady, call: engCall } = useEngine();
+  const { ready: engReady, call: engCall, on: engOn } = useEngine();
   const [ffmpegUpd, setFfmpegUpd] = useState<{ current: string; latest: string; nightly: boolean } | null>(null);
+  const [ffmpegBusy, setFfmpegBusy] = useState(false);      // 更新中
+  const [ffmpegPct, setFfmpegPct] = useState(0);            // 下载进度
+  const [ffmpegConfirm, setFfmpegConfirm] = useState(false); // 确认弹窗
+  const [ffmpegMsg, setFfmpegMsg] = useState<string | null>(null); // 完成/失败提示
   useEffect(() => {
     if (!engReady) return;
     let cancelled = false;
@@ -112,6 +115,36 @@ function App() {
       cancelled = true;
     };
   }, [engReady, engCall]);
+
+  /* 更新进度事件（只注册一次） */
+  useEffect(() => {
+    return engOn((ev) => {
+      if (ev.ev === "ffmpeg_progress") {
+        const p = (ev as { percent?: number }).percent;
+        if (typeof p === "number") setFfmpegPct(p);
+      }
+    });
+  }, [engOn]);
+
+  /* 一键更新：下载稳定版 → 自动替换（引擎内备份旧版，失败回滚） */
+  const doUpdate = async () => {
+    setFfmpegConfirm(false);
+    setFfmpegBusy(true);
+    setFfmpegPct(0);
+    try {
+      const r = (await engCall("ffmpeg_update")) as { ok?: boolean; version?: string; error?: string };
+      if (r?.ok) {
+        setFfmpegMsg(r.version ? `已自动更新到 ffmpeg ${r.version}` : "已自动更新到最新稳定版");
+        setFfmpegUpd(null);
+      } else {
+        setFfmpegMsg(r?.error || "更新失败，请重试");
+      }
+    } catch (e) {
+      setFfmpegMsg(String(e instanceof Error ? e.message : e));
+    } finally {
+      setFfmpegBusy(false);
+    }
+  };
 
   return (
     <TipProvider>
@@ -143,18 +176,27 @@ function App() {
                   </>
                 )}
               </span>
-              <button
-                onClick={() => void openUrl("https://www.gyan.dev/ffmpeg/builds/")}
-                className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-white text-[12px] hover:bg-amber-700 cursor-pointer"
-              >
-                去官网下载
-              </button>
-              <button
-                onClick={() => setFfmpegUpd(null)}
-                className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer"
-              >
-                知道了
-              </button>
+              <div className="shrink-0 flex items-center gap-2">
+                {ffmpegBusy ? (
+                  <span className="text-amber-800 text-[12px] tabular-nums">
+                    {ffmpegPct < 100 ? `下载中 ${ffmpegPct}%` : "解压替换中…"}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setFfmpegConfirm(true)}
+                    className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-white text-[12px] hover:bg-amber-700 cursor-pointer"
+                  >
+                    一键更新
+                  </button>
+                )}
+                <button
+                  onClick={() => setFfmpegUpd(null)}
+                  disabled={ffmpegBusy}
+                  className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer disabled:opacity-50"
+                >
+                  知道了
+                </button>
+              </div>
             </div>
           )}
           {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
@@ -185,6 +227,32 @@ function App() {
         settings={settings}
         onChange={setSettings}
       />
+      {/* ffmpeg 一键更新确认 */}
+      <Dialog open={ffmpegConfirm} onClose={() => setFfmpegConfirm(false)} title="更新 ffmpeg" width={460}>
+        <div className="text-[13px] leading-relaxed text-text-main">
+          <p>
+            将下载 ffmpeg 最新稳定版（约 160MB）并<b className="text-brand-700">自动替换</b>当前版本，无需手动覆盖。
+          </p>
+          <p className="mt-2 text-text-sub">
+            建议在无压缩任务进行时更新；若替换时文件被占用会提示失败，旧版本自动保留。
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setFfmpegConfirm(false)}>
+            取消
+          </Button>
+          <Button onClick={() => void doUpdate()}>开始更新</Button>
+        </div>
+      </Dialog>
+
+      {/* ffmpeg 更新完成/失败提示 */}
+      <Dialog open={!!ffmpegMsg} onClose={() => setFfmpegMsg(null)} title="ffmpeg 更新" width={420}>
+        <div className="text-[13px] text-text-main">{ffmpegMsg}</div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={() => setFfmpegMsg(null)}>好</Button>
+        </div>
+      </Dialog>
+
       {/* 托盘"退出"且任务进行中：警告弹窗（未完成任务的文件将被删除，源文件保留） */}
       <Dialog open={quitWarn} onClose={() => setQuitWarn(false)} title="任务进行中" width={480}>
         <div className="text-[13px] leading-relaxed text-text-main">
