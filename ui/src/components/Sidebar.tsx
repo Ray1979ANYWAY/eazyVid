@@ -21,9 +21,9 @@ export function Sidebar({
     ${active ? "bg-white/15 text-white" : "text-white/65 hover:text-white hover:bg-white/10"}`;
 
   return (
-    <aside className="w-[196px] shrink-0 flex flex-col bg-[linear-gradient(180deg,#14185E_0%,#0C34B8_55%,#501A94_100%)]">
+    <aside className="w-[196px] shrink-0 flex flex-col bg-[linear-gradient(180deg,#14185E_0%,#0C34B8_55%,#501A94_100%)]" data-tauri-drag-region>
       {/* 品牌区 */}
-      <div className="flex items-center gap-2.5 px-4 h-16 border-b border-white/10">
+      <div className="flex items-center gap-2.5 px-4 h-16 border-b border-white/10" data-tauri-drag-region>
         <Logo size={36} />
         <div className="text-[19px] font-bold text-white font-display tracking-wide leading-none">eazyVid</div>
       </div>

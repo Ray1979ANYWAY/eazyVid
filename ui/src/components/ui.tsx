@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { diag } from "../diag";
 
 /* ============ 基础按钮 ============ */
@@ -204,8 +205,9 @@ export function ContextMenu({
       window.removeEventListener("contextmenu", close);
     };
   }, [onClose, items.length]);
-  return (
-    <div className="fixed z-[60]" style={{ left: x, top: y }}>
+  /* Portal 到 body：右键菜单永远渲染在最顶层，不受容器 transform/overflow/z-index 干扰 */
+  return createPortal(
+    <div className="fixed z-[9999]" style={{ left: x, top: y }}>
       <div className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
         {items.map((it, i) => (
           <button
@@ -220,7 +222,8 @@ export function ContextMenu({
           </button>
         ))}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

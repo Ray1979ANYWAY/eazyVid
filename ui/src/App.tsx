@@ -73,7 +73,7 @@ function App() {
           cmpDot={cmpDot}
           onSettings={() => setSettingsOpen(true)}
         />
-        <main className="flex-1 min-w-0 min-h-0 pt-11">
+        <main className="flex-1 min-w-0 min-h-0 pt-11" data-tauri-drag-region>
           {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
           <div className={panel === "download" ? "h-full" : "hidden"}>
             <DownloadPanel
