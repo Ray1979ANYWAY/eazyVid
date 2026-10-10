@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sidebar, type Panel } from "./components/Sidebar";
 import { DownloadPanel } from "./components/DownloadPanel";
 import { CompressPanel } from "./components/CompressPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { WindowControls } from "./components/WindowControls";
 import { TipProvider, Dialog, Button } from "./components/ui";
+import { useEngine } from "./hooks/useEngine";
 
 export type Settings = {
   dlWorkers: number;
@@ -92,6 +94,25 @@ function App() {
     void invoke("quit_confirmed");
   };
 
+  /* 每次启动检查 ffmpeg 是否有新的稳定版（引擎就绪后一次） */
+  const { ready: engReady, call: engCall } = useEngine();
+  const [ffmpegUpd, setFfmpegUpd] = useState<{ current: string; latest: string; nightly: boolean } | null>(null);
+  useEffect(() => {
+    if (!engReady) return;
+    let cancelled = false;
+    engCall("ffmpeg_check")
+      .then((r) => {
+        const rr = r as { ok?: boolean; current?: string; latest?: string; newer?: boolean; nightly?: boolean };
+        if (!cancelled && rr?.newer && rr.current && rr.latest) {
+          setFfmpegUpd({ current: rr.current, latest: rr.latest, nightly: !!rr.nightly });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [engReady, engCall]);
+
   return (
     <TipProvider>
       {/* 外层：全窗口可拖拽；顶部 44px 为自绘标题栏区（右上角为窗口控制按钮） */}
@@ -103,16 +124,48 @@ function App() {
           cmpDot={cmpDot}
           onSettings={() => setSettingsOpen(true)}
         />
-        <main className="flex-1 min-w-0 min-h-0 pt-11" data-tauri-drag-region>
+        <main className="flex-1 min-w-0 min-h-0 pt-11 flex flex-col" data-tauri-drag-region>
+          {/* ffmpeg 新版提示（启动检查一次；可关闭） */}
+          {ffmpegUpd && (
+            <div className="shrink-0 mx-4 mt-3 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+              <svg width="14" height="14" viewBox="0 0 24 24" className="shrink-0" style={{ color: "#B45309" }}>
+                <path d="M12 9v5m0 3.5v.5M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="flex-1 min-w-0">
+                {ffmpegUpd.nightly ? (
+                  <>
+                    当前 ffmpeg 是非稳定版（<b>{ffmpegUpd.current}</b>），最新稳定版为 <b>{ffmpegUpd.latest}</b>
+                    ，建议更换以获得更好的稳定性与压缩性能
+                  </>
+                ) : (
+                  <>
+                    发现 ffmpeg 新版本 <b>{ffmpegUpd.latest}</b>（当前 {ffmpegUpd.current}），更新可提升压缩性能与格式兼容性
+                  </>
+                )}
+              </span>
+              <button
+                onClick={() => void openUrl("https://www.gyan.dev/ffmpeg/builds/")}
+                className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-white text-[12px] hover:bg-amber-700 cursor-pointer"
+              >
+                去官网下载
+              </button>
+              <button
+                onClick={() => setFfmpegUpd(null)}
+                className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer"
+              >
+                知道了
+              </button>
+            </div>
+          )}
           {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
-          <div className={panel === "download" ? "h-full" : "hidden"}>
+          <div className={panel === "download" ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
             <DownloadPanel
               dlWorkers={settings.dlWorkers}
               dlDir={settings.dlDir}
               onActivityChange={(b, f, running) => setDlAct({ busy: b, fail: f, running })}
             />
           </div>
-          <div className={panel === "compress" ? "h-full" : "hidden"}>
+          <div className={panel === "compress" ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
             <CompressPanel
               compressWorkers={settings.compressWorkers}
               outSame={settings.outSame}

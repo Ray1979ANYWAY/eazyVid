@@ -317,6 +317,49 @@ def _cmd_cmp_stop(req):
     reply(req["id"], ok=False, error="压缩任务不存在或已结束")
 
 
+def _ver_key(v):
+    """'7.1.1' → (7,1,1)，用于版本号比较"""
+    try:
+        return tuple(int(x) for x in str(v).split(".")[:3])
+    except (TypeError, ValueError):
+        return (0, 0, 0)
+
+
+def _cmd_ffmpeg_check(req):
+    """检查 ffmpeg 是否有新的稳定版：本地版本 vs ffmpeg.org 官方 release 最新稳定版。
+    本地为 nightly/自编译（版本号 N-xxx）时也提示（建议换稳定版）。
+    网络失败/解析失败时静默返回（不打扰用户，newer=False）。"""
+    cur = ""
+    cur_nightly = False
+    try:
+        ff = os.path.join(eazyvid.SCRIPT_DIR, "ffmpeg.exe")
+        r = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
+                           creationflags=NO_WINDOW | 0x00004000)
+        m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
+        if m:
+            cur = m.group(1)
+        else:
+            m = re.search(r"ffmpeg version (N-\d+[^\s]*)", r.stdout or "")
+            if m:
+                cur = m.group(1)
+                cur_nightly = True
+    except Exception:
+        pass
+    latest = ""
+    try:
+        import urllib.request
+        req = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "replace")
+        vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
+        if vers:
+            latest = max(vers, key=_ver_key)
+    except Exception:
+        pass
+    # 本地是 nightly → 只要存在稳定版就提示；本地是稳定版 → 版本号严格更大才提示
+    newer = bool(latest and ((cur_nightly and cur) or (cur and _ver_key(latest) > _ver_key(cur))))
+    reply(req.get("id"), ok=True, current=cur, latest=latest, newer=newer, nightly=cur_nightly)
+
+
 # ---------- 主循环 ----------
 def _cmd_quit(req=None):
     """退出清理：杀干净所有下载/压缩子进程 + 清理临时文件（.part 缓存、压缩半成品）"""
@@ -419,6 +462,8 @@ def main():
                 _cmd_cmp_stop(req)
             elif cmd == "cmp_scan_dir":
                 _cmd_cmp_scan_dir(req)
+            elif cmd == "ffmpeg_check":
+                _cmd_ffmpeg_check(req)
             elif cmd == "quit":
                 _cmd_quit()
                 break

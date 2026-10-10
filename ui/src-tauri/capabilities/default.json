@@ -18,6 +18,7 @@
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "**" }]
     },
+    "opener:allow-open-url",
     "dialog:default"
   ]
 }
