@@ -1,0 +1,11 @@
+     Running BeforeDevCommand (`npm run dev`)
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching D:\Documents\eazyVid\ui\src-tauri for changes...
+[1m[93mwarning[0m[1m[97m: linker stdout: 正在创建库 D:\Documents\eazyVid\ui\src-tauri\target\debug\deps\ui_lib.dll.lib 和对象 D:\Documents\eazyVid\ui\src-tauri\target\debug\deps\ui_lib.dll.exp[0m
+  [1m[96m|[0m
+  [1m[96m= [0m[1m[97mnote[0m: `#[warn(linker_messages)]` on by default
+
+[1m[93mwarning[0m: `ui` (lib) generated 1 warning
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 1.99s
+[1m[92m     Running[0m `target\debug\ui.exe`
+[1m[91merror[0m: process didn't exit successfully: `target\debug\ui.exe` (exit code: 0xffffffff)

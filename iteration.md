@@ -877,3 +877,19 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 覆盖 toggle 联动：仅"与源文件同目录"模式下可操作；切换"指定目录"时覆盖 toggle 灰色禁用（ToggleSwitch 新增 set_enabled：灰色外观+点击忽略），且自动关闭覆盖（指定目录下覆盖无意义）。
 - 下载池 _update_pool_scrollregion 的 clamp 条件从 `h<=vh and yv[0]>0` 改为内容≤视口无条件回顶（与压缩池一致；Tk 负区残留时 yview() 仍报 (0,1)）。
 - 回归全绿。
+
+### 2026-09-30 迭代（第九轮）：关闭进系统托盘
+- 关闭按钮（X）→ 隐藏到系统托盘（pystray 0.19.5 + ICO\eazyVid.ico，64px），下载/压缩任务继续运行；首次隐藏弹托盘气泡提示。
+- 托盘菜单：显示（双击/默认项恢复窗口）；退出（先恢复窗口再走原 _on_exit 完整清理：任务确认/杀进程/清缓存/关嗅探/删锁，结尾 os._exit(0) 进程终止图标自然消失）。
+- pystray 缺失时降级为原退出逻辑。回归全绿。
+
+### 2026-10-10 迭代（Tauri 壳引擎挂载）：Python 核心引擎 RPC + Rust 桥 + 前端真实接线
+- **架构落地**：tkinter 版 eazyvid.py（~4700 行）核心逻辑 → 可独立运行的 RPC 服务 engine_rpc.py（stdio JSON 行协议）；Tauri(Rust) 壳 spawn 引擎进程，React 前端经 useEngine hook 调用——"换壳不换引擎"，脚本/GUI/UI 三端共用一套逻辑（老友记 SE01.07 试压误判的两套逻辑教训的根治）。
+- **engine_rpc.py**（新增）：命令 ping/probe/dl_add/dl_pause/dl_resume/dl_retry/dl_remove/cmp_add/cmp_stop/quit；事件 ready/dl/cmp/log/bye。复用 eazyvid 的 DownloadPool（信号量并发、暂停断点、retry 清缓存）、DownloadTask._run（进度解析+merging 判定 pct≥100 且进程活）、probe_url(-J)→probe_formats_f(-F) 兜底、compress_video。
+- **关键坑 1——进度事件被 if self.ui 门控吞掉**：DownloadTask 的进度回调依赖 ui 对象（tkinter 版是任务行组件），RPC 版 ui=None → 进度/速度/总大小事件全部丢失，只剩 added/done。修：RPC 挂 _RpcUI 假壳（refresh 空实现 + frame=None）。
+- **关键坑 2——yt-dlp 继承父进程 stdin 卡死**：RPC 主线程 or line in sys.stdin 读自己的 stdin（pipe）时，yt-dlp（pyinstaller onefile 双进程 + deno JS challenge）继承该 stdin 句柄后卡在 YouTube 解析阶段（无输出、tmpdir 空、进程存活）。命令行/direct 引擎测试通、RPC 三次全卡，复刻实验锁定根因。修：eazyvid.DownloadTask.start 的 Popen 加 stdin=subprocess.DEVNULL（GUI 无副作用）。
+- **engine.rs**（新增）：spawn 本地 python + CREATE_NO_WINDOW|BELOW_NORMAL；stdout 逐行 emit "engine:event"，stderr→engine:stderr；engine_send 写 stdin；shutdown=quit→sleep 600ms→taskkill /T /F 进程树兜底。lib.rs：manage Engine + setup spawn + ExitRequested shutdown + engine_send/engine_restart commands。
+- **useEngine.ts**（新增）：单例 listen("engine:event")；call() 自增 id+Promise 按 id 匹配；on() 订阅事件；ready 状态。
+- **DownloadPanel.tsx 真实接线**：tasks 空初始（去 MOCK_DL）；探测→引擎 probe（过滤纯音频流、note 优先显示 1080p 式分辨率、AV1 警告）；dl 事件流驱动任务列表（waiting/downloading/paused/done/failed/merging/removed）；暂停/恢复/重下/删除发引擎命令+乐观更新；速度直接显示引擎紧凑格式（803K/S）。
+- **验证铁证**：真实探测 YouTube（Rick Astley）返回 40+ 格式（144p~2160p + 多音轨，真实标题与字节大小）；真实下载 144p（fmt 160，2MB）事件流完整：waiting→downloading（pct 0→99.9、got 递增、speed 实时、标题自动修正）→done（100%），9 秒落盘。tsc 全绿、cargo build 通过、ui.exe + 引擎进程 spawn 正常。
+- **遗留**：压缩面板仍用 MOCK_CMP（引擎 cmp_add/cmp_stop 已就绪，压缩队列 Worker 语义未接 UI）；拖拽 float-center 槽位修复待用户实测验收。

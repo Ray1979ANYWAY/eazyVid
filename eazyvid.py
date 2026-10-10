@@ -890,7 +890,10 @@ class DownloadTask:
         cmd, self.tmpdir = build_dl_cmd(self.url, self.fmt_arg, self.out_dir, self.task_id,
                                          self.use_cookie, self.referer)
         self.state = "downloading"
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        # stdin=DEVNULL：yt-dlp 不需要交互输入；父进程若在持续读自己的 stdin（RPC/服务模式），
+        # 子进程继承该句柄会卡在启动解析阶段（复现：父进程主线程 for line in sys.stdin 时下载卡死）
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding="utf-8", errors="replace",
                                      creationflags=NO_WINDOW | 0x00004000)  # BELOW_NORMAL：下载不抢界面
         if not self.fmt_arg:
@@ -1206,9 +1209,10 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
         if not os.path.exists(fp):
             fp = "ffprobe"
 
-        # 一次 ffprobe：时长 / 视频 pix_fmt / 音频编码与码率
+        # 一次 ffprobe：时长 / 视频 pix_fmt / 视频编码 / 音频编码与码率
         duration = None
         pix_fmt = ""
+        v_codec = ""
         v_br = 0          # 源视频码率（bps），用于压缩前预检
         a_codec, a_br = "", 0
         try:
@@ -1230,6 +1234,8 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                     v_br = 0
                 for s in info.get("streams", []):
                     if s.get("codec_type") == "video":
+                        if not v_codec:
+                            v_codec = s.get("codec_name", "") or ""
                         if not pix_fmt:
                             pix_fmt = s.get("pix_fmt", "") or ""
                         try:
@@ -1269,29 +1275,67 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                     try:
                         us = float(line.split("=", 1)[1])
                         if duration and progress_cb:
-                            progress_cb(min(1.0, us / (duration * 1000000.0)))
+                            progress_cb(min(1.0, us / (duration * 1000000.0)), us, duration)
+                        # 试压判定：首次编码到 _trial_sec 秒内容时，用已输出字节实测码率预估全程。
+                        # 预估压缩后 > 源×_trial_keep（省<20%）→ 终止进程（判定时进程不断，
+                        # 通过则这段就是全片开头，零浪费）；终止则删残缺输出。
+                        if not _trial["abort"] and us >= _trial_sec * 1_000_000.0 \
+                                and duration and os.path.exists(out_path):
+                            try:
+                                cur_bytes = os.path.getsize(out_path)
+                                est_secs = us / 1_000_000.0
+                                est_total = cur_bytes / est_secs * duration
+                                _trial["est"] = est_total
+                                if est_total > _trial["in_sz"] * _trial_keep:
+                                    _trial["abort"] = True
+                                    log_cb(f"试压 {int(_trial_sec)} 秒实测：预估压缩后 "
+                                           f"{_fmt_size(est_total)}（源 {_fmt_size(_trial['in_sz'])}），"
+                                           f"预计压缩不足 10%，终止并保留原文件")
+                                    try:
+                                        proc.kill()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                     except (ValueError, ZeroDivisionError):
                         pass
             proc.wait()
             return proc.returncode
 
-        # 压缩前预检：源码率已很低（≈VP9/AV1 高度压缩，CRF 重压必然更大）→ 直接跳过，不浪费编码时间
-        # ffprobe 报告的 bit_rate 可能缺失/写错（部分封装不写该字段）→ 用 文件大小÷时长 实测总码率兜底
+        # 源码率实测兜底（ffprobe bit_rate 可能缺失/写错）→ 文件大小÷时长 实测总码率
         try:
             if duration:
                 real_br = int(os.path.getsize(in_path) * 8.0 / duration)
                 v_br = max(v_br, real_br)
         except Exception:
             pass
-        if v_br and v_br <= 1000 * 1000:
-            log_cb(f"源码率仅 {v_br // 1000}kbps（已高度压缩），压缩预计无法减小体积，跳过并保留原文件")
+        # 压缩前预检：AV1/VP9 且码率 ≤6Mbps（高效编码+低码率）→ 重压必然无收益，直接跳过
+        # 高码率 AV1/VP9（>6Mbps，如直播录播/低效压制版）放行，交给下方 60 秒试压实测判定
+        if v_codec in ("av1", "vp9") and v_br <= 6_000_000:
+            log_cb(f"源为 {v_codec.upper()} 编码（压缩效率高于/等于 x265）且码率仅 {v_br // 1000}kbps，"
+                   f"重压无法减小体积，跳过并保留原文件")
             return True, None
+        # 其余情况（含低码率 H.264/HEVC、高码率 AV1/VP9）不再用数字阈值拦截，
+        # 一律进入压缩，由 60 秒试压实测判定是否继续（避免数字判断误杀有收益的文件）
+        _trial = {"abort": False, "est": 0, "in_sz": os.path.getsize(in_path)}
+        _trial_sec = 180.0          # 试压点：编码到第 3 分钟内容时判定（60s 单点采样代表性差，曾误杀 SE01.07）
+                                    # 时长 <3 分钟的视频不会到达该点 → 压完全片走"输出>输入则删"兜底
+        _trial_keep = 0.90          # 预估压缩后 ≤ 源×0.90（省≥10%）才继续；否则终止
+                                    # （阈值放宽：片头段落画面最复杂，试压码率会高估全片，
+                                    #   老友记类剧集 60s 试压预估曾达 80.5% 被误杀；宁可多压不误杀）
         vargs = ["-c:v", m["codec"]] + list(m.get("params", []))
         # 10bit 色深：软件 x265 按 10bit 编码
         if any(x in pix_fmt for x in ("10le", "12le", "p010", "p012")):
             vargs += ["-pix_fmt", "yuv420p10le"]
         log_cb(f"开始压缩：{os.path.basename(in_path)} → {os.path.basename(out_path)}（{mode_name}）")
         rc = _run(vargs)
+        if _trial["abort"]:
+            # 试压判定终止：删除残缺输出，保留原文件，标"收益小已终止"
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+            return True, None
         if rc != 0 or not os.path.exists(out_path):
             log_cb(f"压缩失败（返回码 {rc}）")
             return False, None
@@ -1387,6 +1431,13 @@ class CompressQueue:
         self._start_workers()
 
     def add(self, path, mode, ui_ref=None, autostart=False):
+        # 防重复压：同路径+同模式 且 未开始/进行中 → 拒绝（返回 None）
+        # 不同模式允许（用户可能想多模式对比）；已完成/终止/失败的允许重新压
+        with self._lock:
+            for t in self.tasks:
+                if t.get("state") in ("queued", "compressing") and \
+                   t.get("path", "").lower() == path.lower() and t.get("mode") == mode:
+                    return None
         self._seq += 1
         rec = {"id": self._seq, "path": path, "mode": mode, "ui_ref": ui_ref,
                "state": "queued", "progress": 0.0, "eta": None, "_eta_ema": None, "out": None, "ok": False,
@@ -1484,12 +1535,15 @@ class CompressQueue:
                 self.on_event(("cstarted", rec))
             rec["_t0"] = time.monotonic()
 
-            def prog(p):
+            def prog(p, us=0, dur=0):
                 # compress_video 回调 0~1 → 统一存 0~100（UI 按 0~100 渲染百分比与底色宽度）
                 now = time.monotonic()
                 cur = min(100.0, p * 100.0)
                 prog._samples.append((now, cur))
                 rec["progress"] = cur
+                # 已编码位置（秒）/ 总时长（秒），供 UI 显示 "6:21/22:35"
+                rec["enc_pos"] = us / 1000000.0 if us else None
+                rec["dur"] = dur or None
                 res = _estimate_eta(prog._samples, now, cur, rec.get("_eta_ema"))
                 if res is None:
                     rec["eta"] = None
@@ -1516,11 +1570,26 @@ class CompressQueue:
                     rec["state"] = "failed"
             if ok and out:
                 rec["out"] = out
+                # 完成时记录压缩后大小（压缩成果统计用；覆盖原文件后 out==path 也不影响该记录）
+                try:
+                    rec["out_size"] = os.path.getsize(out)
+                except OSError:
+                    rec["out_size"] = 0
                 if self.overwrite and rec.get("state") == "done":
                     try:
-                        os.replace(out, rec["path"])   # 覆盖原文件
-                        rec["out"] = rec["path"]
-                        self.log(f"已覆盖原文件：{os.path.basename(rec['path'])}")
+                        # 覆盖模式：压缩版以 .mp4 扩展名替换源文件（含扩展名一起覆盖）
+                        new_path = os.path.splitext(rec["path"])[0] + ".mp4"
+                        os.replace(out, new_path)
+                        # 源文件与目标不同名（如 .mkv/.avi 等）时删除源文件
+                        if os.path.abspath(new_path) != os.path.abspath(rec["path"]) \
+                                and os.path.exists(rec["path"]):
+                            try:
+                                os.remove(rec["path"])
+                            except OSError:
+                                pass
+                        rec["path"] = new_path
+                        rec["out"] = new_path
+                        self.log(f"已覆盖原文件：{os.path.basename(new_path)}")
                     except OSError:
                         pass
             rec["ok"] = ok
@@ -1676,6 +1745,13 @@ class TaskRow:
         self.speed_lbl.pack(side="right")
         self.state_lbl.pack(side="right")
         bind_tooltip(self.del_btn, "删除", self.app.root)
+        # 右键转发：tkinter 点击子控件不会冒泡到 frame——行内所有子控件（文件名/状态/按钮等）
+        # 的右键统一转发到行菜单，保证右键点行内任意位置都能弹出菜单
+        for w in self.frame.winfo_children():
+            try:
+                w.bind("<Button-3>", self._on_row_right)
+            except Exception:
+                pass
 
     def _on_press_sel(self, e):
         self.app._pool_press(self, e)
@@ -1741,14 +1817,15 @@ class TaskRow:
         """右键：多选→批量移出（运行中除外）；单选→打开/打开所在文件夹 + 移出队列"""
         m = None
         try:
-            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行 ----
+            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行（并同步进选中集合，否则清不掉残留高亮）----
             if not self.selected:
                 self.app._pool_clear_sel()
                 self.set_selected(True)
+                self.app._pool_sel.add(self)
             sel = self.app._pool_rows_sel()
             if len(sel) > 1:
                 m = tk.Menu(self.frame, tearoff=0)
-                m.add_command(label=f"移出队列（{len(sel)} 项，运行中除外）",
+                m.add_command(label=f"移出队列（{len(sel)} 项）",
                               command=lambda: self.app._pool_batch_remove(sel))
                 m.tk_popup(e.x_root, e.y_root)
                 return
@@ -1770,8 +1847,8 @@ class TaskRow:
             m.add_separator()
             m.add_command(label="移出队列", command=lambda: self.app._pool_remove_one(self))
             m.tk_popup(e.x_root, e.y_root)
-        except Exception:
-            pass
+        except Exception as ex:
+            self.app.log(f"下载池右键异常: {ex!r}")
         finally:
             if m is not None:
                 try:
@@ -1935,7 +2012,7 @@ def _estimate_eta(samples, now, cur_p, prev_ema=None):
     t0, p0 = samples[0]
     dt = now - t0
     dp = cur_p - p0
-    if dt < 3.0 or dp < 0.2:      # 采样不足或进展太少，不估（阈值 0.2%：慢速大文件也能在几十秒内开始显示）
+    if dt < 3.0 or dp < 0.05:     # 采样不足或进展太少，不估（阈值 0.05%：慢速大文件也能在几十秒内开始显示 ETA）
         return None
     inst = dp / dt                # 窗口瞬时速度 %/秒（15s 平均，本身已较稳）
     ema = inst if prev_ema is None else 0.4 * inst + 0.6 * prev_ema
@@ -2036,6 +2113,19 @@ def _fmt_eta(secs):
     h = r // 3600
     return f"约{d}天{h}时" if h else f"约{d}天"
 
+def _fmt_pos(enc_pos, dur):
+    """已编码位置显示：6:21/22:35（分钟:秒 / 总分钟:秒）；数据缺失时返回空"""
+    try:
+        if not enc_pos or not dur:
+            return ""
+        a = int(enc_pos)
+        b = int(dur)
+        if b <= 0:
+            return ""
+        return f"{a // 60}:{a % 60:02d}/{b // 60}:{b % 60:02d}"
+    except Exception:
+        return ""
+
 def _fmt_elapsed(secs):
     """压缩执行时长显示：45秒 / 5分30秒 / 1时23分"""
     if not secs:
@@ -2064,7 +2154,8 @@ def _fmt_size(n):
 ROW_BG = "#F0F0F0"          # 压缩行默认底色
 ROW_BG_ACTIVE = "#D9E9F8"   # 压缩中行底色（30% 透明度淡蓝效果）
 ROW_BG_DONE = "#E4E0FA"     # 完成态：薰衣草紫（30% 透明度效果）
-ROW_BG_END = "#FBEDD8"      # 失败/终止/收益小：淡橙（30% 透明度效果）
+ROW_BG_END = "#FBEDD8"      # 失败/收益小：淡橙（30% 透明度效果）
+ROW_BG_STOP = "#F7EEDF"     # 被终止：#C78B2A 15% 透明度效果（叠加白底）
 ROW_SEL = "#C9C9C9"          # 选中行：比灰底深一点
 
 class CompressRow:
@@ -2083,6 +2174,7 @@ class CompressRow:
                                               text=self._full_name, fill="#1f1f1f")
         self._txt_size = self._cv.create_text(336, 15, anchor="w", text="", fill="#1f1f1f", tags="rinfo")
         self._txt_pct = self._cv.create_text(0, 15, anchor="e", text="", fill="#1f1f1f", tags="rinfo")
+        self._txt_pos = self._cv.create_text(0, 15, anchor="e", text="", fill="#404040", tags="rinfo")
         self._txt_eta = self._cv.create_text(0, 15, anchor="e", text="", fill="#606060", tags="rinfo")
         self._txt_state = self._cv.create_text(0, 15, anchor="e", text="排队", fill="#1f1f1f", tags="rinfo")
         # 右侧控件：嵌入 canvas（按钮/下拉自带底色，位于行右侧；进度 100% 只到删除按钮右缘）
@@ -2247,14 +2339,15 @@ class CompressRow:
             st = r.get("state")
             out = r.get("out")
             out_dir = self.app.cqueue.out_dir or os.path.dirname(r["path"]) or "."
-            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行 ----
+            # ---- 多选整合：右键落在未选中行 → 清空其它并选中本行（并同步进选中集合，否则清不掉残留高亮）----
             if not self.selected:
                 self.app._cp_clear_sel()
                 self.set_selected(True)
+                self.app._cp_sel.add(self)
             sel = self.app._cp_rows_sel()
             if len(sel) > 1:
                 m = tk.Menu(self.frame, tearoff=0)
-                m.add_command(label=f"移出队列（{len(sel)} 项，运行中除外）",
+                m.add_command(label=f"移出队列（{len(sel)} 项）",
                               command=lambda: self.app._cp_batch_remove(sel))
                 m.tk_popup(e.x_root, e.y_root)
                 return
@@ -2268,8 +2361,10 @@ class CompressRow:
             else:
                 # 压缩中 / 排队：仅打开输出目录
                 m.add_command(label="打开输出目录", command=lambda: _os_reveal(out_dir))
-            m.add_separator()
-            m.add_command(label="移出队列", command=lambda: self.app._cp_remove_one(self))
+            if st != "compressing":
+                # 压缩中不能移出（需先终止），不显示该菜单项
+                m.add_separator()
+                m.add_command(label="移出队列", command=lambda: self.app._cp_remove_one(self))
             m.tk_popup(e.x_root, e.y_root)
         except Exception:
             pass
@@ -2313,18 +2408,20 @@ class CompressRow:
                 self._cv.coords(self._win_restart, x, y); x -= self.restart_btn.winfo_reqwidth() + 6
             if self._stop_shown:
                 self._cv.coords(self._win_stop, x, y); x -= self.stop_btn.winfo_reqwidth() + 6
-            # C 列（状态区）：右缘 = 按钮组左缘 - 10，固定宽 175（容纳长 ETA，防百分比/ETA 重叠）
-            C_W = 175
+            # C 列（状态区）：右缘 = 按钮组左缘 - 10，固定宽 230
+            # 元素从右到左：状态(最右) → ETA(-55) → 已编码位置(-120) → 百分比(动态跟位置左缘)
+            C_W = 230
             c_right = x - 10
             c_left = c_right - C_W
             self._cv.coords(self._txt_state, c_right, y)         # 状态最右
-            self._cv.coords(self._txt_eta, c_right - 60, y)      # ETA 在状态左侧 60px
-            # 百分比右缘动态跟随 ETA 左缘（-8px），长 ETA 也不重叠；保底不越 C 区左缘
-            _ebb = self._cv.bbox(self._txt_eta)
+            self._cv.coords(self._txt_eta, c_right - 55, y)     # ETA 在状态左侧
+            self._cv.coords(self._txt_pos, c_right - 120, y)    # 已编码/总时长在 ETA 左侧
+            # 百分比右缘动态跟随已编码位置左缘（-8px），长 ETA 也不重叠；保底不越 C 区左缘
+            _ebb = self._cv.bbox(self._txt_pos)
             if _ebb:
                 self._cv.coords(self._txt_pct, max(c_left + 10, _ebb[0] - 8), y)
             else:
-                self._cv.coords(self._txt_pct, c_right - 105, y)
+                self._cv.coords(self._txt_pct, c_right - 165, y)
             # B 列（大小）：固定宽 80（"841.7MB" 约 60px 留余量，让空间给 C 区）
             B_W = 80
             b_left = c_left - B_W - 12
@@ -2375,7 +2472,9 @@ class CompressRow:
             base = ROW_SEL
         elif s == "done":
             base = ROW_BG_DONE
-        elif s in ("failed", "stopped", "skipped"):
+        elif s == "stopped":
+            base = ROW_BG_STOP
+        elif s in ("failed", "skipped"):
             base = ROW_BG_END
         else:
             base = ROW_BG
@@ -2428,6 +2527,8 @@ class CompressRow:
         self._cv.itemconfig(self._txt_size, text=size_txt)
         self._cv.itemconfig(self._txt_pct,
                             text=f"{r['progress']:.0f}%" if s == "compressing" else "")
+        self._cv.itemconfig(self._txt_pos,
+                            text=_fmt_pos(r.get("enc_pos"), r.get("dur")) if s == "compressing" else "")
         self._cv.itemconfig(self._txt_eta,
                             text=_fmt_eta(r.get("eta")) if s == "compressing" else "")
         self._cv.itemconfig(self._txt_state,
@@ -2534,7 +2635,8 @@ class App:
         self.q = queue.Queue()
         self.sniffer = None
         # 退出清理：防止 pythonw 进程残留（下载/嗅探线程阻止退出）
-        self.root.protocol("WM_DELETE_WINDOW", self._on_exit)
+        # 关闭按钮 → 隐藏到系统托盘（任务继续）；托盘菜单"退出"→ 完整清理逻辑
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_to_tray)
 
         self.current_info = None
 
@@ -2561,22 +2663,91 @@ class App:
         root.after(100, self._poll_queue)
         root.after(500, self._tab_tick)
 
+    def _on_close_to_tray(self):
+        """点击窗口关闭（X）→ 隐藏到系统托盘，下载/压缩任务继续运行。
+        托盘不可用（未装 pystray 等）时降级为原退出逻辑。"""
+        try:
+            self._ensure_tray()
+            self.root.withdraw()
+            if not getattr(self, "_tray_notified", False):
+                self._tray_notified = True
+                try:
+                    ic = getattr(self, "_tray_icon", None)
+                    if ic is not None:
+                        ic.notify("eazyVid 已最小化到托盘，下载/压缩任务继续运行", "eazyVid")
+                except Exception:
+                    pass
+        except Exception:
+            self._on_exit()
+
+    def _ensure_tray(self):
+        """惰性创建系统托盘图标（pystray + ICO\eazyVid.ico）；失败时置空并抛出由调用方降级"""
+        if getattr(self, "_tray_icon", None) is not None:
+            return
+        try:
+            import pystray
+            from PIL import Image
+            img = None
+            ico = os.path.join(SCRIPT_DIR, "ICO", "eazyVid.ico")
+            if os.path.exists(ico):
+                try:
+                    img = Image.open(ico).resize((64, 64), Image.LANCZOS)
+                except Exception:
+                    img = None
+            menu = pystray.Menu(
+                pystray.MenuItem("显示 eazyVid", lambda: self.root.after(0, self._restore_from_tray),
+                                 default=True),
+                pystray.MenuItem("退出", self._quit_from_tray),
+            )
+            self._tray_icon = pystray.Icon("eazyVid", img, "eazyVid", menu)
+            threading.Thread(target=self._tray_icon.run, daemon=True).start()
+        except Exception:
+            self._tray_icon = None
+            raise
+
+    def _restore_from_tray(self):
+        """从托盘恢复主窗口（托盘线程回调 → after 切回主线程）"""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
+    def _quit_from_tray(self, icon=None, item=None):
+        """托盘菜单"退出"：切回主线程走完整退出清理（含任务确认/杀进程/清缓存/删锁）"""
+        try:
+            self.root.after(0, self._real_quit)
+        except Exception:
+            self._real_quit()
+
+    def _real_quit(self):
+        """托盘"退出"：先恢复窗口（隐藏状态下 messagebox 确认框会显示异常），
+        再走完整退出清理；用户取消则保持隐藏+托盘继续。"""
+        try:
+            self.root.deiconify()
+            self.root.lift()
+        except Exception:
+            pass
+        self._on_exit()
+
     def _on_exit(self):
         """退出清理：任务进行中 → 确认弹窗 + 杀进程树（下载 yt-dlp / 压缩 ffmpeg）；关闭嗅探 Chrome。"""
-        # 1) 统计进行中任务（下载中 / 压缩中）
-        dl = [t for t in self.pool.tasks
-              if t.state == "downloading" and getattr(t, "proc", None) is not None and t.proc.poll() is None]
+        # 1) 统计进行中任务（下载中 / 暂停 / 压缩中）——暂停任务退出后 .part 缓存同样丢弃
+        dl = [t for t in self.pool.tasks if t.state in ("downloading", "paused")]
         cp = [r for r in self.cqueue.tasks if r["state"] == "compressing"]
         if dl or cp:
             if not messagebox.askyesno(
                     "任务进行中",
-                    f"当前有 {len(dl) + len(cp)} 个任务正在进行（下载 {len(dl)} 个、压缩 {len(cp)} 个）。\n"
+                    f"当前有 {len(dl) + len(cp)} 个任务正在进行或暂停（下载 {len(dl)} 个、压缩 {len(cp)} 个）。\n"
                     "退出会中断这些任务，未完成任务的文件将被删除：压缩的中间输出、下载的临时缓存都会被清除（源文件保留）。\n确定要退出吗？",
                     parent=self.root):
                 return
         # 2) 杀下载进程树（yt-dlp 可能带 ffmpeg 合并子进程），并清理下载缓存（.part 临时目录）
         for t in dl:
-            _kill_proc_tree(t.proc)
+            p = getattr(t, "proc", None)
+            if p is not None and p.poll() is None:
+                _kill_proc_tree(p)
             try:
                 td = getattr(t, "tmpdir", None)
                 if td and os.path.isdir(td):
@@ -2787,6 +2958,7 @@ class App:
         ttk.Button(top, text="粘贴", width=4, command=lambda: self._paste_url_extract()).pack(side="left", padx=2)
         ttk.Button(top, text="探测格式", command=self.on_probe).pack(side="left", padx=2)
         self.root.bind_all("<Button-1>", self._on_any_click)
+        self.root.bind_all("<Delete>", self._on_delete_key)
         self._probe_bar = ttk.Progressbar(top, mode="indeterminate", length=120, cursor="hand2")
         self._probe_bar.pack_forget()
         bind_tooltip(self._probe_bar, "点击取消当前探测", self.root)
@@ -2807,7 +2979,11 @@ class App:
         self.fmt_tree.bind("<Leave>", lambda e: self._hide_dl_btn())
         self.fmt_tree.bind("<Button-1>", self._on_tree_click)
         self.fmt_tree.bind("<Double-1>", self._on_tree_double)
-        self._dl_btn = ttk.Button(self.fmt_tree, text="⬇ 下载", width=8)
+        try:
+            ttk.Style().configure("DlBtn.TButton", font=("Microsoft YaHei", 8), padding=(6, 0))
+        except Exception:
+            pass
+        self._dl_btn = ttk.Button(self.fmt_tree, text="⬇ 下载", style="DlBtn.TButton")
         self._dl_btn.place_forget()
 
         pf = ttk.LabelFrame(self._dl_page, text="下载池（并行下载，可暂停/恢复；每行可选压缩模式）")
@@ -2853,9 +3029,6 @@ class App:
         self._cp_canvas.bind("<Configure>", lambda e: self._cp_canvas.itemconfigure(self._cp_win, width=e.width))
         self._cp_canvas.pack(side="left", fill="both", expand=True)
         sb2.pack(side="right", fill="y")
-        ttk.Label(self._cp_page,
-                  text="模式说明：x265 默认≈体积减半画质不变；高画质最接近原片；小体积最省空间。",
-                  foreground="#666").pack(anchor="w", padx=8)
 
         # 默认显示下载页
         self._show_page("dl")
@@ -2868,16 +3041,24 @@ class App:
             self.root.bind_all("<MouseWheel>", self._on_mousewheel)
         except Exception:
             pass
-        # 右下角：所有任务结束后关机开关
+        # 右下角：所有任务结束后关机开关 + 压缩收益统计（统计在上、开关在下，两行堆叠）
         self._shutdown_after = False
         self._shutdown_fired = False
         self._had_tasks = False
-        self._shutdown_lbl = ttk.Label(self._bottom_bar, text="所有任务结束后关机",
+        self._right_box = ttk.Frame(self._bottom_bar)
+        self._right_box.pack(side="right", padx=(0, 8))
+        # 压缩收益统计（仅切到压缩页显示；放关机开关上面一行）
+        self._free_lbl = ttk.Label(self._right_box, text="", font=("Microsoft YaHei", 8), foreground="#666")
+        self._free_lbl.pack_forget()
+        self._free_txt = ""
+        self._shutdown_row = ttk.Frame(self._right_box)
+        self._shutdown_row.pack(side="top", anchor="e")
+        self._shutdown_lbl = ttk.Label(self._shutdown_row, text="所有任务结束后关机",
                                         font=("Microsoft YaHei", 8), foreground="#666")
-        self._shutdown_toggle = ToggleSwitch(self._bottom_bar, on_toggle=self._on_shutdown_toggle,
+        self._shutdown_toggle = ToggleSwitch(self._shutdown_row, on_toggle=self._on_shutdown_toggle,
                                              w=34, h=18)
-        self._shutdown_lbl.pack(side="right", padx=(6, 4))
-        self._shutdown_toggle.pack(side="right", padx=(0, 8))
+        self._shutdown_lbl.pack(side="left", padx=(6, 4))
+        self._shutdown_toggle.pack(side="left", padx=(0, 4))
         self.logfile = os.path.join(SCRIPT_DIR, "eazyvid.log")
         try:
             with open(self.logfile, "a", encoding="utf-8") as _lf:
@@ -2913,8 +3094,17 @@ class App:
         self._page = name
         if name == "cp":
             self._cp_page.pack(fill="both", expand=True)
+            try:
+                # 压缩版面：显示"压缩收益"统计（关机开关上面一行）
+                self._free_lbl.pack(side="top", anchor="e", before=self._shutdown_row)
+            except Exception:
+                pass
         else:
             self._dl_page.pack(fill="both", expand=True)
+            try:
+                self._free_lbl.pack_forget()
+            except Exception:
+                pass
         self._update_tab_indicators()
 
     def _update_tab_indicators(self):
@@ -2947,8 +3137,35 @@ class App:
                     tab.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, outline="#9AA0A6", width=2)
                 tab.create_text(w // 2 + 9, cy, text=tab.text, fill="#111111",
                                 font=("Microsoft YaHei UI", 11))
+            # 压缩版面：实时刷新"压缩收益"统计（每 100ms tick 顺带，始终显示）
+            if self._page == "cp" and getattr(self, "_free_lbl", None) is not None:
+                _n, _tot = self._calc_free_space()
+                _txt = f"当前任务列表，已完成压缩收益{_fmt_size(_tot) or '0 B'}"
+                if _txt != self._free_txt:
+                    self._free_txt = _txt
+                    try:
+                        self._free_lbl.config(text=_txt)
+                    except Exception:
+                        pass
         except Exception:
             pass
+
+    def _calc_free_space(self):
+        """统计压缩队列中已完成任务的压缩成果：Σ(原文件大小 - 压缩后大小)
+        纯内存计算（完成时已记录 out_size），覆盖与否、文件是否还在都不影响"""
+        n, total = 0, 0
+        try:
+            for r in self.cqueue.tasks:
+                if r.get("state") != "done" or not r.get("ok"):
+                    continue
+                orig = r.get("orig_size") or 0
+                out_sz = r.get("out_size") or 0
+                if orig > 0 and out_sz > 0:
+                    total += max(0, orig - out_sz)
+                    n += 1
+        except Exception:
+            pass
+        return n, total
 
     def _tab_tick(self):
         """100ms 驱动 tab 卡片状态灯（呼吸平滑）"""
@@ -2982,7 +3199,8 @@ class App:
         """实际构建设置弹窗（与 _open_settings 分离：异常可捕获并写日志定位）"""
         win = tk.Toplevel(self.root)
         win.title("设置")
-        self._center_window(win, 620, 420)
+        _apply_window_icon(win)
+        self._center_window(win, 620, 460)
         win.transient(self.root)
         win.grab_set()
         wp = {"padx": 8, "pady": 4}
@@ -3068,9 +3286,12 @@ class App:
         # ---- 同时压缩数 ----
         ttk.Label(win, text="同时压缩数:").grid(row=9, column=0, sticky="w", **wp)
         workers_var = tk.StringVar(value=str(getattr(self, "_max_workers", 1)))
-        ttk.Spinbox(win, textvariable=workers_var, width=8,
-                    from_=1, to=16, increment=1).grid(row=9, column=1, sticky="w", **wp)
-        ttk.Label(win, text="（建议 1~4，过大会占满 CPU/磁盘）", foreground="#888").grid(row=9, column=2, sticky="w", **wp)
+        wf = ttk.Frame(win)
+        wf.grid(row=9, column=1, columnspan=2, sticky="w", **wp)
+        ttk.Spinbox(wf, textvariable=workers_var, width=8,
+                    from_=1, to=16, increment=1).pack(side="left")
+        ttk.Label(wf, text="（建议不超过 3，并行进程过多可能会造成压缩比与画面质量波动）",
+                  foreground="#888").pack(side="left", padx=(6, 0))
 
         def ok():
             d = dl_var.get().strip()
@@ -3276,8 +3497,8 @@ class App:
         added = 0
         for path in paths:
             if os.path.isfile(path) and path.lower().endswith(exts):
-                self.cqueue.add(path, self.compress_mode_var.get())
-                added += 1
+                if self.cqueue.add(path, self.compress_mode_var.get()) is not None:
+                    added += 1
         if added:
             self.log(f"已拖入 {added} 个文件到压缩队列")
 
@@ -3288,8 +3509,8 @@ class App:
             parent=self.root)
         n = 0
         for f in files:
-            self.cqueue.add(f, self.compress_mode_var.get())
-            n += 1
+            if self.cqueue.add(f, self.compress_mode_var.get()) is not None:
+                n += 1
         if n:
             self.log(f"已添加 {n} 个文件到压缩队列")
     def _pick_compress_dir(self):
@@ -3548,6 +3769,7 @@ class App:
         self.log(f"探测失败：{err}")
         win = tk.Toplevel(self.root)
         win.title("需要你播放一次")
+        _apply_window_icon(win)
         self._center_window(win, 480, 210)
         win.transient(self.root)
         tk.Label(win, text="视频文件藏得比较深，需要你在我们的窗口\n再点击一次播放。",
@@ -3983,7 +4205,8 @@ class App:
                 x = cb[0] + cb[2] - bw
             else:
                 x = max(0, bbox[2] - bw)
-            self._dl_btn.place(x=x, y=y, width=bw, height=max(18, h))
+            bh = 20
+            self._dl_btn.place(x=x, y=y + max(0, (h - bh) // 2), width=bw, height=bh)
             self._dl_btn.config(command=lambda r=row: self._download_fmt_row(r))
 
     def _hide_dl_btn(self):
@@ -4258,6 +4481,25 @@ class App:
                     return r
             w = w.master
         return None
+
+    def _on_delete_key(self, _e=None):
+        """Delete 键：删除当前面板选中的任务行（等价右键批量移出，运行中跳过）。
+        焦点在输入控件（Entry/Spinbox/下拉/多行）时不触发，保证能正常编辑文字"""
+        try:
+            w = self.root.focus_get()
+            if w is not None and w.winfo_class() in ("Entry", "Spinbox", "TCombobox", "Text"):
+                return
+        except Exception:
+            pass
+        if self._page == "cp":
+            if self._cp_sel:
+                self._cp_batch_remove(list(self._cp_sel))
+                self._cp_sel.clear()
+        else:
+            if self._pool_sel:
+                self._pool_batch_remove(list(self._pool_sel))
+                self._pool_sel.clear()
+        return "break"
 
     def _pool_remove_one(self, row):
         """下载池单行移出（运行中跳过）"""

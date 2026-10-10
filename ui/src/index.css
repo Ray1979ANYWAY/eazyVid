@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* ============ eazyVid 品牌主题（源自 ico/eazyVid.svg 蓝紫渐变）============ */
+@theme {
+  /* 品牌蓝（图标渐变起点） */
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe7ff;
+  --color-brand-200: #bcd3ff;
+  --color-brand-300: #8db4ff;
+  --color-brand-400: #5b8cff;
+  --color-brand-500: #005ce6;
+  --color-brand-600: #0a44c9;
+  --color-brand-700: #0c34b8;
+  --color-brand-800: #14185e;
+  --color-brand-900: #12144a;
+
+  /* 品牌紫（图标渐变终点） */
+  --color-violet-brand: #7b2cbf;
+  --color-violet-soft: #501a94;
+
+  /* 中性色（Soft UI 浅色模式） */
+  --color-surface: #f7f8fc;
+  --color-card: #ffffff;
+  --color-border-soft: #e5e7eb;
+  --color-border-brand: #e0e7ff;
+  --color-text-main: #1e293b;
+  --color-text-sub: #64748b;
+
+  /* 状态色 */
+  --color-ok: #059669;
+  --color-warn: #d97706;
+  --color-danger: #dc2626;
+
+  /* 完成态行底色（薰衣草紫 30%）、终止/失败（琥珀 15%） */
+  --color-lavender-row: rgba(123, 44, 191, 0.3);
+  --color-amber-row: rgba(199, 138, 42, 0.15);
+
+  /* 字体 */
+  --font-display: "Outfit", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-body: "Work Sans", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+
+  /* 品牌渐变 */
+  --gradient-brand: linear-gradient(135deg, #005ce6 0%, #0c34b8 25%, #14185e 55%, #501a94 80%, #7b2cbf 100%);
+  --gradient-brand-h: linear-gradient(90deg, #005ce6 0%, #0c34b8 30%, #501a94 70%, #7b2cbf 100%);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-text-main);
+  background: var(--color-surface);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c3c9d9 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #c3c9d9;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #a8b0c6;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input, textarea {
+  user-select: text;
+}
+
+/* 行内 tooltip（条件渲染，非空即显示） */
+.ez-tip {
+  position: fixed;
+  z-index: 100;
+  background: #14185e;
+  color: #fff;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(20, 24, 94, 0.25);
+  white-space: nowrap;
+}
+
+@keyframes ez-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.ez-breathe {
+  animation: ez-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes ez-spin {
+  to { transform: rotate(360deg); }
+}
+.ez-spin {
+  animation: ez-spin 0.9s linear infinite;
+}
+
+@keyframes ez-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.ez-sweep {
+  animation: ez-sweep 1.4s ease-in-out infinite;
+}
