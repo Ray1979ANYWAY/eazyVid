@@ -3,6 +3,7 @@ import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip, Context
 import { COMPRESS_MODES, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
+import { diag } from "../diag";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -232,8 +233,10 @@ export function CompressPanel({
 
   /* 行右键：完成态 = 打开文件 + 打开输出目录；其余 = 打开输出目录 */
   const openCtx = (e: React.MouseEvent, t: CmpTask) => {
+    diag(`CTX open name=${t.name} btn=${e.button} type=${e.type}`);
     e.preventDefault();
     setCtx({ x: e.clientX, y: e.clientY, t });
+    diag(`CTX set x=${e.clientX} y=${e.clientY}`);
   };
   const ctxItems = (): CtxItem[] => {
     if (!ctx) return [];

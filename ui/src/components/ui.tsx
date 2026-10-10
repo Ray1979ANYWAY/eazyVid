@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type ButtonHTMLAttributes,
 } from "react";
+import { diag } from "../diag";
 
 /* ============ 基础按钮 ============ */
 type BtnVariant = "primary" | "ghost" | "danger" | "soft" | "outline";
@@ -187,20 +188,22 @@ export function ContextMenu({
   onClose: () => void;
 }) {
   useEffect(() => {
-    const close = (e: MouseEvent) => {
+    diag(`CTX mounted items=${items.length}`);
+    const close = (e: Event) => {
       // 右键按下不关菜单（等 contextmenu 事件决定位置/关闭）；左键按下或失焦才关
-      if (e.type === "mousedown" && e.button !== 0) return;
+      if (e.type === "mousedown" && (e as MouseEvent).button !== 0) return;
       onClose();
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("blur", close);
     window.addEventListener("contextmenu", close);
     return () => {
+      diag("CTX unmounted");
       window.removeEventListener("mousedown", close);
       window.removeEventListener("blur", close);
       window.removeEventListener("contextmenu", close);
     };
-  }, [onClose]);
+  }, [onClose, items.length]);
   return (
     <div className="fixed z-[60]" style={{ left: x, top: y }}>
       <div className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
