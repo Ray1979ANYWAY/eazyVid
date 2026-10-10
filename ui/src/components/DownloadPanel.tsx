@@ -23,6 +23,15 @@ const tryReveal = (p: string, kind: string) => {
 const DL_ROW_H = 62; // 56px 行高 + 6px 间距
 
 /* ============ 格式列表行 ============ */
+/* 从混杂文本（分享文案+表情+链接）提取 URL：优先 Markdown [标题](url)，否则第一个 http(s) 链接 */
+function extractUrl(text: string): string {
+  if (!text) return "";
+  const md = text.match(/\]\((https?:\/\/[^\s）)\]]+)/);
+  if (md) return md[1].replace(/[)\]]+$/, "");
+  const m = text.match(/https?:\/\/[^\s）)\]]+/);
+  return m ? m[0].replace(/[)\]]+$/, "") : "";
+}
+
 function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) => void }) {  const [hover, setHover] = useState(false);
   const show = useTip();
 
@@ -389,8 +398,7 @@ export function DownloadPanel({
   const paste = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      const m = text.match(/https?:\/\/[^\s）)\]]+/);
-      setUrl(m ? m[0] : text.trim());
+      setUrl(extractUrl(text) || text.trim());
     } catch {
       /* clipboard 权限失败时用户手动粘贴 */
     }
@@ -488,6 +496,12 @@ export function DownloadPanel({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && probe()}
+              onPaste={(e) => {
+                /* 右键/快捷键粘贴：自动提取 URL，清洗分享文案 */
+                e.preventDefault();
+                const t = e.clipboardData.getData("text");
+                setUrl(extractUrl(t) || t.trim());
+              }}
               placeholder="粘贴视频页面地址，回车探测"
               className="w-full h-9 pl-3.5 pr-12 rounded-lg border border-border-soft bg-white text-[13px] text-text-main
                 placeholder:text-text-sub/60 focus:outline-2 focus:outline-brand-500 focus:border-brand-300"
@@ -497,7 +511,8 @@ export function DownloadPanel({
               onClick={paste}
               className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7"
             >
-              <Icon d="M9 5h6a2 2 0 0 1 2 2v9m-4 3H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2" size={15} />
+              {/* 剪贴板 + 向下箭头：把剪贴板内容放入地址栏 */}
+              <Icon d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm5 5v6m0 0 3-3m-3 3-3-3" size={15} />
             </IconBtn>
           </div>
 
@@ -565,7 +580,7 @@ export function DownloadPanel({
                 ) : probeErr ? (
                   <span className="text-warn">探测失败：{probeErr}</span>
                 ) : (
-                  <>点击「探测格式」后，可用格式将显示在这里</>
+                  <>可用格式将显示在这里</>
                 )}
               </div>
             ) : (
@@ -584,9 +599,6 @@ export function DownloadPanel({
         <div className="flex items-center justify-between mb-2 shrink-0">
           <div className="text-[12px] font-semibold text-text-main">
             下载池 <span className="text-text-sub font-normal">（{tasks.length} 项 · 完成 {doneCount}）</span>
-          </div>
-          <div className="text-[11px] text-text-sub">
-            并行下载 {dlWorkers} 路 · 拖入或右键多选 · 等待/暂停/失败可拖动调整优先级
           </div>
         </div>
         <div
