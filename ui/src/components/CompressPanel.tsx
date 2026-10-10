@@ -460,6 +460,13 @@ export function CompressPanel({
             }
             case "failed":
               return { ...t, status: "failed", pct: undefined };
+            case "skipped":
+              return {
+                ...t,
+                status: "skipped",
+                pct: undefined,
+                elapsed: t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000) : undefined,
+              };
             case "stopped":
               return { ...t, status: "stopped", pct: undefined };
             default:

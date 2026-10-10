@@ -248,6 +248,14 @@ def _compress_worker(req, rec):
     if not ok:
         emit({"ev": "cmp", "id": rec["id"], "state": "failed", "error": "压缩失败，见日志", "mode": mode})
         return
+    if not out:
+        # (True, None) = 试压判定无收益 / 输出比源更大，已放弃输出并保留原文件 → 标"收益小已终止"
+        try:
+            orig = os.path.getsize(path)
+        except OSError:
+            orig = 0
+        emit({"ev": "cmp", "id": rec["id"], "state": "skipped", "orig": orig, "mode": mode})
+        return
     # 统计：原大小 / 输出大小 / 压缩比
     orig = os.path.getsize(path)
     out_sz = os.path.getsize(out) if out and os.path.exists(out) else 0
