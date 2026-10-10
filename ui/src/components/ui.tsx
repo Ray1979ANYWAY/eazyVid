@@ -187,7 +187,11 @@ export function ContextMenu({
   onClose: () => void;
 }) {
   useEffect(() => {
-    const close = () => onClose();
+    const close = (e: MouseEvent) => {
+      // 右键按下不关菜单（等 contextmenu 事件决定位置/关闭）；左键按下或失焦才关
+      if (e.type === "mousedown" && e.button !== 0) return;
+      onClose();
+    };
     window.addEventListener("mousedown", close);
     window.addEventListener("blur", close);
     window.addEventListener("contextmenu", close);

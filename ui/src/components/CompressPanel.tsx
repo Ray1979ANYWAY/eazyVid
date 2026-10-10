@@ -218,7 +218,10 @@ export function CompressPanel({
   coverSec?: number;
   onActivityChange?: (busy: boolean, fail: boolean) => void;
 }) {
-  const [tasks, setTasks] = useState<CmpTask[]>([]);
+  const [tasks, setTasks] = useState<CmpTask[]>([
+    { id: "mock-q1", name: "DEV_MOCK_排队任务_老友记.SE01.07.mkv", path: "D:\\mock\\1.mkv", status: "queued", mode: "default", orig: 686 * 1024 * 1024 },
+    { id: "mock-d1", name: "DEV_MOCK_已完成任务_老友记.SE01.08.mkv", path: "D:\\mock\\2.mkv", status: "done", mode: "hq", orig: 700 * 1024 * 1024, outSize: 380 * 1024 * 1024, ratio: 45.7, outPath: "D:\\mock\\2_compressed.mp4" },
+  ]);
   const [defMode, setDefMode] = useState("default");
   const [shutdown, setShutdown] = useState(false);
   const [fileOver, setFileOver] = useState(false);

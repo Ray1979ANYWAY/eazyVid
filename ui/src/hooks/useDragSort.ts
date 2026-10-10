@@ -28,6 +28,7 @@ export function useDragSort<T extends { id: string }>(
   /* 行上按下：仅可拖行 + 非控件区域启动 */
   const onRowMouseDown = useCallback(
     (e: React.MouseEvent, id: string) => {
+      if (e.button !== 0) return; // 只左键拖拽；右键留给 contextmenu（行右键菜单）
       const t = itemsRef.current.find((x) => x.id === id);
       if (!t || !canDrag(t)) return;
       if ((e.target as HTMLElement).closest("button, select, input, a")) return;
