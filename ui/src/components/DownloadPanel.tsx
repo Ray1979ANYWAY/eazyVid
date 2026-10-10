@@ -4,6 +4,21 @@ import { type DlFormat, type DlTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { diag } from "../diag";
+
+/** 打开文件/目录：调用前后 + 错误全部落盘探针（定位"点了没动作"） */
+const tryOpen = (p: string, kind: string) => {
+  diag(`OPEN ${kind} path=${p}`);
+  openPath(p)
+    .then(() => diag(`OPEN ${kind} ok`))
+    .catch((e) => diag(`OPEN ${kind} FAIL ${String(e)}`));
+};
+const tryReveal = (p: string, kind: string) => {
+  diag(`REVEAL ${kind} path=${p}`);
+  revealItemInDir(p)
+    .then(() => diag(`REVEAL ${kind} ok`))
+    .catch((e) => diag(`REVEAL ${kind} FAIL ${String(e)}`));
+};
 
 const DL_ROW_H = 62; // 56px 行高 + 6px 间距
 
@@ -164,10 +179,10 @@ function DlRow({
           )}
           {t.status === "done" && (
             <>
-              <IconBtn tip="打开文件" onClick={() => {}}>
+              <IconBtn tip="打开文件" onClick={() => t.path && tryOpen(t.path, "dl-row-open")}>
                 <Icon d="M14 4h6v6m0-6L9 15m11-11v6" size={18} />
               </IconBtn>
-              <IconBtn tip="打开所在文件夹" onClick={() => {}}>
+              <IconBtn tip="打开所在文件夹" onClick={() => t.path && tryReveal(t.path, "dl-row-reveal")}>
                 <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={18} />
               </IconBtn>
             </>
@@ -275,14 +290,14 @@ export function DownloadPanel({
     const p = t.path || "";
     const items: CtxItem[] = [];
     if (t.status === "done" && p) {
-      items.push({ label: "打开文件", onClick: () => openPath(p).catch(() => {}) });
+      items.push({ label: "打开文件", onClick: () => tryOpen(p, "dl-open") });
     }
     items.push({
       label: "打开所在目录",
       onClick: () => {
         const dir = p ? p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"))) : dlDir;
-        if (p) revealItemInDir(p).catch(() => (dir ? openPath(dir).catch(() => {}) : undefined));
-        else if (dir) openPath(dir).catch(() => {});
+        if (p) tryReveal(p, "dl-reveal");
+        else if (dir) tryOpen(dir, "dl-open-dir");
       },
     });
     return items;

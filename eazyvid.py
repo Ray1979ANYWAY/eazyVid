@@ -890,6 +890,9 @@ class DownloadTask:
         cmd, self.tmpdir = build_dl_cmd(self.url, self.fmt_arg, self.out_dir, self.task_id,
                                          self.use_cookie, self.referer)
         self.state = "parsing"   # yt-dlp 启动后先解析视频信息/构建命令，真正开始下载才转 downloading
+        # 立即上报 parsing 状态（RPC 模式：UI 显示"解析中…"，避免空等无反馈）
+        if self.ui:
+            self.pool.on_task_update(self)
         # stdin=DEVNULL：yt-dlp 不需要交互输入；父进程若在持续读自己的 stdin（RPC/服务模式），
         # 子进程继承该句柄会卡在启动解析阶段（复现：父进程主线程 for line in sys.stdin 时下载卡死）
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,

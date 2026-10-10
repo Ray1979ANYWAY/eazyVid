@@ -8,6 +8,20 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
+/** 打开文件/目录：调用前后 + 错误全部落盘探针（定位"点了没动作"） */
+const tryOpen = (p: string, kind: string) => {
+  diag(`OPEN ${kind} path=${p}`);
+  openPath(p)
+    .then(() => diag(`OPEN ${kind} ok`))
+    .catch((e) => diag(`OPEN ${kind} FAIL ${String(e)}`));
+};
+const tryReveal = (p: string, kind: string) => {
+  diag(`REVEAL ${kind} path=${p}`);
+  revealItemInDir(p)
+    .then(() => diag(`REVEAL ${kind} ok`))
+    .catch((e) => diag(`REVEAL ${kind} FAIL ${String(e)}`));
+};
+
 /* 输出文件路径（与引擎命名一致：源名_compressed.mp4；覆盖模式完成态用 done 事件 out） */
 function outPathOf(t: CmpTask, outSame: boolean, outDir: string): string {
   if (t.outPath) return t.outPath;
@@ -242,14 +256,13 @@ export function CompressPanel({
     const out = outPathOf(t, outSame, outDir);
     const items: CtxItem[] = [];
     if (t.status === "done") {
-      items.push({ label: "打开文件", onClick: () => out && openPath(out).catch(() => {}) });
+      items.push({ label: "打开文件", onClick: () => out && tryOpen(out, "cmp-open") });
     }
     items.push({
       label: "打开输出目录",
       onClick: () => {
         if (!out) return;
-        const dir = out.slice(0, Math.max(out.lastIndexOf("\\"), out.lastIndexOf("/")));
-        revealItemInDir(out).catch(() => openPath(dir).catch(() => {}));
+        tryReveal(out, "cmp-reveal");
       },
     });
     return items;
