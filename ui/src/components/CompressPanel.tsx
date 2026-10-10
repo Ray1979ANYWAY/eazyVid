@@ -279,7 +279,7 @@ export function CompressPanel({
        已完成/排队等其余状态仅移出列表（保留输出文件） */
     const t = tasks.find((x) => x.id === id);
     if (t && t.status === "running" && t.cmpId != null) {
-      engine.call("cmp_stop", { id: t.cmpId });
+      engine.call("cmp_stop", { cmp_id: t.cmpId });
     }
     setTasks((prev) => prev.filter((x) => x.id !== id));
   };
@@ -397,7 +397,7 @@ export function CompressPanel({
   /* 终止：发引擎停止（引擎回 stopped 事件驱动状态） */
   const stopTask = (t: CmpTask) => {
     if (t.cmpId != null) {
-      engine.call("cmp_stop", { id: t.cmpId });
+      engine.call("cmp_stop", { cmp_id: t.cmpId });
     }
   };
 

@@ -279,14 +279,16 @@ def _cmd_cmp_add(req):
     with _cmp_lock:
         _cmp_seq[0] += 1
         cid = _cmp_seq[0]
-        _cmp_running[cid] = {"proc": None}
-    threading.Thread(target=_compress_worker, args=(req, {"id": cid}), daemon=True).start()
+        rec = {"proc": None, "id": cid}   # 同一 dict 同时注册进 _cmp_running 和传给 worker
+        _cmp_running[cid] = rec
+    threading.Thread(target=_compress_worker, args=(req, rec), daemon=True).start()
     reply(req["id"], ok=True, cmp_id=cid)  # cmp_id = 压缩任务 id（避免与 RPC 响应 id 键冲突）
 
 
 def _cmd_cmp_stop(req):
+    cid = req.get("cmp_id", req.get("id"))   # 参数键用 cmp_id，避免与 RPC 请求 id 键冲突
     with _cmp_lock:
-        rec = _cmp_running.get(req.get("id"))
+        rec = _cmp_running.get(cid)
     if rec and rec.get("proc") is not None:
         eazyvid._kill_proc_tree(rec["proc"])
         # 终止即删半成品输出（用户规则：终止任务应删除压缩一半的文件）
@@ -296,7 +298,7 @@ def _cmd_cmp_stop(req):
                 os.remove(out)
             except OSError:
                 pass
-        emit({"ev": "cmp", "id": req.get("id"), "state": "stopped", "mode": req.get("mode", "")})
+        emit({"ev": "cmp", "id": cid, "state": "stopped", "mode": req.get("mode", "")})
         reply(req["id"], ok=True)
         return
     reply(req["id"], ok=False, error="压缩任务不存在或已结束")
@@ -317,7 +319,7 @@ def main():
             emit({"ev": "log", "msg": f"RPC 解析失败: {line[:200]}"})
             continue
         cmd = req.get("cmd")
-        _trace("req", {"id": req.get("id"), "cmd": cmd})
+        _trace("req", {"id": req.get("id"), "cmd": cmd, "args": {k: v for k, v in req.items() if k not in ("id", "cmd")}})
         try:
             if cmd == "ping":
                 reply(req.get("id"), ok=True, pid=os.getpid())
