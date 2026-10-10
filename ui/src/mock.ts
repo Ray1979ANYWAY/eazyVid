@@ -6,6 +6,7 @@ export type DlFormat = {
   codec: string;
   size: string;
   ext: string;
+  videoOnly?: boolean;
   warn?: boolean;
   warnText?: string;
 };

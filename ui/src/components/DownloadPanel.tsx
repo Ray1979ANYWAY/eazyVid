@@ -291,6 +291,7 @@ export function DownloadPanel({
   /* 引擎格式 → UI 格式行 */
   const toDlFormat = (f: Record<string, unknown>): DlFormat => {
     const vc = String(f.vcodec ?? "");
+    const ac = String(f.acodec ?? "");
     let codec = "未知";
     if (vc.includes("av1")) codec = "AV1";
     else if (vc.includes("vp")) codec = "VP9";
@@ -306,6 +307,8 @@ export function DownloadPanel({
       codec,
       size: size ? fmtSize(size) : "未知",
       ext: String(f.ext ?? "mp4"),
+      // YouTube 等 DASH 站点：视频流与音频流分离，videoOnly 格式下载时必须拼 +bestaudio 才有声音
+      ...(vc !== "none" && ac === "none" ? { videoOnly: true } : {}),
       ...(vc.includes("av1") ? { warn: true, warnText: "AV1 兼容性差，多数播放器无法硬解" } : {}),
     };
   };
@@ -386,7 +389,8 @@ export function DownloadPanel({
   const addTask = (f: DlFormat) => {
     void engine.call("dl_add", {
       url: url.trim(),
-      fmt_id: f.id,
+      // video-only 流（YouTube DASH）自动合并最佳音频，否则下载出来没声音
+      fmt_id: f.videoOnly ? `${f.id}+bestaudio/best` : f.id,
       out_dir: dlDir,
       title: "",
       size: 0,
