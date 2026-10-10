@@ -205,8 +205,10 @@ export function ContextMenu({
       }
     }, 800);
     const close = (e: Event) => {
-      // 右键按下不关菜单（等 contextmenu 事件决定位置/关闭）；左键按下或失焦才关
+      // 右键按下不关菜单（等 contextmenu 事件决定位置/关闭）
       if (e.type === "mousedown" && (e as MouseEvent).button !== 0) return;
+      // 菜单内部点击不关闭：让 click 事件正常落到菜单项上（否则 mousedown 先卸载菜单，onClick 丢失）
+      if (e.type === "mousedown" && e.target instanceof Element && e.target.closest("[data-ctx-menu]")) return;
       onClose();
     };
     window.addEventListener("mousedown", close);
