@@ -189,7 +189,21 @@ export function ContextMenu({
   onClose: () => void;
 }) {
   useEffect(() => {
-    diag(`CTX mounted items=${items.length}`);
+    diag(`CTX mounted items=${items.length} at ${x},${y} vw=${window.innerWidth} vh=${window.innerHeight}`);
+    /* 自检：800ms 后检查菜单 DOM 是否真实可见（定位"挂载但看不见"的实锤） */
+    const checkTimer = window.setTimeout(() => {
+      const el = document.querySelector("[data-ctx-menu]");
+      if (el) {
+        const r = el.getBoundingClientRect();
+        diag(
+          `CTX check rect=${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)} ` +
+            `onScreen=${r.width > 0 && r.height > 0} vw=${window.innerWidth} vh=${window.innerHeight} ` +
+            `inViewport=${r.x >= 0 && r.y >= 0 && r.x < window.innerWidth && r.y < window.innerHeight}`,
+        );
+      } else {
+        diag("CTX check NOT FOUND in DOM");
+      }
+    }, 800);
     const close = (e: Event) => {
       // 右键按下不关菜单（等 contextmenu 事件决定位置/关闭）；左键按下或失焦才关
       if (e.type === "mousedown" && (e as MouseEvent).button !== 0) return;
@@ -199,15 +213,16 @@ export function ContextMenu({
     window.addEventListener("blur", close);
     window.addEventListener("contextmenu", close);
     return () => {
+      window.clearTimeout(checkTimer);
       diag("CTX unmounted");
       window.removeEventListener("mousedown", close);
       window.removeEventListener("blur", close);
       window.removeEventListener("contextmenu", close);
     };
-  }, [onClose, items.length]);
+  }, [onClose, items.length, x, y]);
   /* Portal 到 body：右键菜单永远渲染在最顶层，不受容器 transform/overflow/z-index 干扰 */
   return createPortal(
-    <div className="fixed z-[9999]" style={{ left: x, top: y }}>
+    <div className="fixed z-[9999]" data-ctx-menu style={{ left: x, top: y }}>
       <div className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
         {items.map((it, i) => (
           <button

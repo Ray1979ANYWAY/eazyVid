@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// 无控制台窗口（debug 也隐藏黑窗——用户不需要看到 console）
+#![windows_subsystem = "windows"]
 
 fn main() {
     ui_lib::run()

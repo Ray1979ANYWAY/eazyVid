@@ -25,6 +25,10 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 重复启动时聚焦已有窗口（防多开）
+            show_main(app);
+        }))
         .manage(Engine::default())
         .setup(|app| {
             if let Err(e) = Engine::spawn(app.handle()) {
