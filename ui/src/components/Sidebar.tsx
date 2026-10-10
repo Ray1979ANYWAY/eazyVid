@@ -24,11 +24,8 @@ export function Sidebar({
     <aside className="w-[196px] shrink-0 flex flex-col bg-[linear-gradient(180deg,#14185E_0%,#0C34B8_55%,#501A94_100%)]">
       {/* 品牌区 */}
       <div className="flex items-center gap-2.5 px-4 h-16 border-b border-white/10">
-        <Logo size={34} />
-        <div className="leading-tight">
-          <div className="text-[15px] font-bold text-white font-display tracking-wide">eazyVid</div>
-          <div className="text-[10px] text-white/50 tracking-widest uppercase">下载 · 压缩</div>
-        </div>
+        <Logo size={36} />
+        <div className="text-[19px] font-bold text-white font-display tracking-wide leading-none">eazyVid</div>
       </div>
 
       {/* 导航 */}

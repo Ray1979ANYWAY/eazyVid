@@ -22,3 +22,5 @@ hls_test/
 downloaded/
 eazyvid.lock
 adobe_collabsync_restore.reg
+
+tmp/
