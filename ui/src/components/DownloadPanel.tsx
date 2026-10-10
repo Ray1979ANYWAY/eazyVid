@@ -296,7 +296,8 @@ export function DownloadPanel({
       label: "打开所在目录",
       onClick: () => {
         const dir = p ? p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"))) : dlDir;
-        if (p) tryReveal(p, "dl-reveal");
+        // 完成态：定位到文件；非完成态（部分/临时文件可能不存在）：打开目录本身
+        if (t.status === "done" && p) tryReveal(p, "dl-reveal");
         else if (dir) tryOpen(dir, "dl-open-dir");
       },
     });
