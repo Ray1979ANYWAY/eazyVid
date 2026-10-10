@@ -893,3 +893,12 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - **DownloadPanel.tsx 真实接线**：tasks 空初始（去 MOCK_DL）；探测→引擎 probe（过滤纯音频流、note 优先显示 1080p 式分辨率、AV1 警告）；dl 事件流驱动任务列表（waiting/downloading/paused/done/failed/merging/removed）；暂停/恢复/重下/删除发引擎命令+乐观更新；速度直接显示引擎紧凑格式（803K/S）。
 - **验证铁证**：真实探测 YouTube（Rick Astley）返回 40+ 格式（144p~2160p + 多音轨，真实标题与字节大小）；真实下载 144p（fmt 160，2MB）事件流完整：waiting→downloading（pct 0→99.9、got 递增、speed 实时、标题自动修正）→done（100%），9 秒落盘。tsc 全绿、cargo build 通过、ui.exe + 引擎进程 spawn 正常。
 - **遗留**：压缩面板仍用 MOCK_CMP（引擎 cmp_add/cmp_stop 已就绪，压缩队列 Worker 语义未接 UI）；拖拽 float-center 槽位修复待用户实测验收。
+
+### 2026-10-10 迭代（压缩面板真实挂载）：引擎 cmp 链路 + 两个系统性坑
+- **压缩面板接真实引擎（最后一块）**：CompressPanel.tsx 重写——真实文件对话框（@tauri-apps/plugin-dialog）/添加文件夹（cmp_scan_dir 递归枚举）/webview onDragDropEvent 拖入文件（Tauri 拦截原生 HTML 拖拽，必须走 getCurrentWebview 拿真实路径）；"开始压缩"按空闲线程数启动队首任务、各自 cmp_add；cmp 事件流驱动状态（started→orig、compressing→pct/pos/dur/eta、done→outSize/ratio/elapsed、stopped/failed）；终止=cmp_stop；重新压缩=重置 queued 排队尾；收益统计 Σ 原大小×(1−压缩比)；清空已完成含 failed/skipped。
+- **cmp 任务 id 独立化 + 隐蔽坑**：原实现把 RPC 请求 id 当压缩任务 id。改自增 _cmp_seq 后踩坑——`reply(req["id"], ok=True, id=cid)` 的 kw `id` 覆盖响应里 RPC 请求 id 键，前端按 id 匹配响应错乱（管道直测看到两条 {"id":1,"ok":true}）。修复：响应字段改名 **`cmp_id`**，前端从 cmp_id 读压缩任务 id。
+- **坑 2（系统性，第三处同源）——ffmpeg/yt-dlp Popen 继承父进程 stdin 卡死**：压缩链路测试 ffmpeg 启动后 CPU 停在 0.001 秒、16 线程全 Wait、输出文件不增长；命令行直跑同一条 ffmpeg 0.93 秒完成。根因与 DownloadTask 的坑同源：RPC 主线程 `for line in sys.stdin` 读自己的 stdin（pipe）时，子进程继承该句柄 → 卡死零进展。修复：eazyvid.py `compress_video` 内 ffmpeg Popen 和 `_probe_j_impl` 的 yt-dlp Popen 均加 `stdin=subprocess.DEVNULL`（DownloadTask 之外同类第三处）。
+- **管道编码统一 UTF-8**：engine.rs spawn 加 `-X utf8`（Windows 管道模式 Python 默认 locale 编码 GBK，中文路径会让 Rust BufRead.lines() 解析错位）。
+- **engine.rs stderr 落盘探针**：GUI 无 console，spawn 错误/stderr 写入 tmp/engine_spawn_err.txt、tmp/engine_stderr.txt 便于调试。
+- **验证**：管道直测全通——cmp_add → {id:2, ok:true, cmp_id:1} → started(orig:82851) → compressing(pct:85/100, pos:0:04/0:05, eta:0.75) → done(outSize:80932, ratio:2.3)，5 秒测试视频 fast 模式 ~1 秒压完；tsc 全绿；cargo build 通过；ui.exe 重启后引擎进程带 -X utf8 spawn 正常。
+- **遗留**：设置面板 overwrite/cover_sec 仍硬编码兜底（out_dir:null/cover_sec:null/overwrite:false 传引擎）；"所有任务结束后关机"开关纯 UI 无逻辑；压缩 Worker 任务完成不自动补位（当前手动点按钮批量启动）。

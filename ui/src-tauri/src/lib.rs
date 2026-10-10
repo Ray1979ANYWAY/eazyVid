@@ -11,6 +11,7 @@ fn greet(name: &str) -> String {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Engine::default())
         .setup(|app| {
             if let Err(e) = Engine::spawn(app.handle()) {

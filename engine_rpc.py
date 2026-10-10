@@ -180,6 +180,7 @@ def _cmd_dl_remove(req):
 # ---------- 压缩（单任务：add 即起线程，UI 压缩队列下一轮接） ----------
 _cmp_running = {}
 _cmp_lock = threading.Lock()
+_cmp_seq = [0]
 
 
 def _compress_worker(req, rec):
@@ -189,16 +190,34 @@ def _compress_worker(req, rec):
     cover_sec = req.get("cover_sec")
     overwrite = req.get("overwrite", False)
 
+    # started：先报原大小（UI 运行中显示）
+    try:
+        orig = os.path.getsize(path)
+    except OSError:
+        orig = 0
+    emit({"ev": "cmp", "id": rec["id"], "state": "started", "orig": orig, "mode": mode})
+
     def log(msg):
         emit({"ev": "log", "msg": msg})
 
     def progress(frac, us, duration):
+        eta_sec = None
+        if frac and frac > 0.001:
+            eta_sec = (1.0 / frac - 1.0) * (us / 1_000_000.0)
+        # dur 显示为 总时长 mm:ss（_fmt_pos(0,dur) 提取后半段，等价 _fmt_time）
+        dur_txt = ""
+        try:
+            p = eazyvid._fmt_pos(0, duration)
+            if p and "/" in p:
+                dur_txt = p.split("/")[1]
+        except Exception:
+            pass
         emit({
             "ev": "cmp", "id": rec["id"], "state": "compressing",
             "pct": round(frac * 100, 1),
             "pos": eazyvid._fmt_pos(us / 1_000_000.0, duration),
-            "dur": eazyvid._fmt_time(duration),
-            "eta": None, "mode": mode,
+            "dur": dur_txt,
+            "eta": eta_sec, "mode": mode,
         })
 
     try:
@@ -226,11 +245,26 @@ def _compress_worker(req, rec):
           "orig": orig, "outSize": out_sz, "ratio": ratio, "mode": mode})
 
 
+def _cmd_cmp_scan_dir(req):
+    """递归扫描目录内视频文件（压缩面板"添加文件夹"）"""
+    root = req.get("path", "")
+    exts = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".ts", ".m4v", ".mpg", ".mpeg", ".wmv"}
+    found = []
+    if root and os.path.isdir(root):
+        for dp, _dn, fn in os.walk(root):
+            for f in fn:
+                if os.path.splitext(f)[1].lower() in exts:
+                    found.append(os.path.join(dp, f))
+    reply(req["id"], ok=True, files=found)
+
+
 def _cmd_cmp_add(req):
     with _cmp_lock:
-        _cmp_running[req["id"]] = {"proc": None}
-    threading.Thread(target=_compress_worker, args=(req, {"id": req["id"]}), daemon=True).start()
-    reply(req["id"], ok=True)
+        _cmp_seq[0] += 1
+        cid = _cmp_seq[0]
+        _cmp_running[cid] = {"proc": None}
+    threading.Thread(target=_compress_worker, args=(req, {"id": cid}), daemon=True).start()
+    reply(req["id"], ok=True, cmp_id=cid)  # cmp_id = 压缩任务 id（避免与 RPC 响应 id 键冲突）
 
 
 def _cmd_cmp_stop(req):
@@ -290,6 +324,8 @@ def main():
                 _cmd_cmp_add(req)
             elif cmd == "cmp_stop":
                 _cmd_cmp_stop(req)
+            elif cmd == "cmp_scan_dir":
+                _cmd_cmp_scan_dir(req)
             elif cmd == "quit":
                 # 杀干净所有下载/压缩子进程 + 清理临时目录残留
                 if _dl_pool:

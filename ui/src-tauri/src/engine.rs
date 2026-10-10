@@ -30,13 +30,19 @@ const CREATE_FLAGS: u32 = 0x0800_0000 | 0x0000_4000;
 impl Engine {
     pub fn spawn(app: &AppHandle) -> Result<(), String> {
         let mut child = Command::new(PYTHON)
+            .arg("-X")
+            .arg("utf8")
             .arg(SCRIPT)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(CREATE_FLAGS)
             .spawn()
-            .map_err(|e| format!("spawn 引擎失败: {e}"))?;
+            .map_err(|e| {
+                let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\engine_spawn_err.txt",
+                                       format!("{e}\n"));
+                format!("spawn 引擎失败: {e}")
+            })?;
         let stdout = child.stdout.take().ok_or("引擎无 stdout")?;
         let stdin = child.stdin.take().ok_or("引擎无 stdin")?;
 
@@ -54,7 +60,7 @@ impl Engine {
             let _ = app2.emit("engine:event", "__eof__");
         });
 
-        // stderr 转发（引擎异常时的诊断线索）
+        // stderr 转发（引擎异常时的诊断线索）+ 落盘探针（GUI 无 console，stderr 不可见）
         if let Some(stderr) = child.stderr.take() {
             let app3 = app.clone();
             std::thread::spawn(move || {
@@ -62,6 +68,8 @@ impl Engine {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
                     let Ok(line) = line else { break };
+                    let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\engine_stderr.txt",
+                                           format!("{line}\n"));
                     let _ = app3.emit("engine:stderr", line);
                 }
             });

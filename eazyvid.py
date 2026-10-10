@@ -1264,7 +1264,8 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
             cmd += ["-progress", "pipe:1", "-movflags", "+faststart", out_path]
             # 必须用二进制 + bufsize=0 + readline：text 模式会缓冲整段进度输出，
             # 导致进度回调全部积压到进程结束才触发（表现为"1% 卡很久，突然完成"）
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     bufsize=0,
                                     creationflags=NO_WINDOW | 0x00004000)
             if proc_holder is not None:
@@ -3968,7 +3969,8 @@ class App:
             procs = getattr(self, "_probe_procs", None)
             if procs is None:
                 procs = self._probe_procs = set()
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     encoding="utf-8", errors="replace",
                                     creationflags=NO_WINDOW | 0x00004000)
             procs.add(proc)

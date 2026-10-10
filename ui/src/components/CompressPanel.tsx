@@ -1,9 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip } from "./ui";
-import { MOCK_CMP, COMPRESS_MODES, type CmpTask } from "../mock";
+import { COMPRESS_MODES, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
+import { useEngine } from "../hooks/useEngine";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 const ROW_H = 58; // 52px 行高 + 6px 间距
+
+function fmtElapsed(sec: number) {
+  const s = Math.round(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}分${r}秒` : `${r}秒`;
+}
 
 /* ============ 压缩任务行 ============ */
 function CmpRow({
@@ -41,7 +51,7 @@ function CmpRow({
     ? "bg-white"
     : t.status === "done"
       ? "bg-lavender-row"
-      : t.status === "stopped" || t.status === "skipped"
+      : t.status === "stopped" || t.status === "skipped" || t.status === "failed"
         ? "bg-amber-row"
         : "bg-white";
 
@@ -51,6 +61,7 @@ function CmpRow({
     done: "已完成",
     stopped: "已终止",
     skipped: "收益小，已跳过",
+    failed: "压缩失败",
   };
 
   /* 行内容（进度条层 + 信息 grid），浮行与占位共用 */
@@ -72,7 +83,9 @@ function CmpRow({
         </div>
 
         {/* 原文件大小 */}
-        <div className="text-[12px] text-text-sub tabular-nums">{fmtSize(t.orig)}</div>
+        <div className="text-[12px] text-text-sub tabular-nums">
+          {t.orig > 0 ? fmtSize(t.orig) : "—"}
+        </div>
 
         {/* 进度 / 结果信息 */}
         <div className="min-w-0 pr-2">
@@ -99,11 +112,12 @@ function CmpRow({
           {(t.status === "stopped" || t.status === "skipped") && (
             <div className="text-[12px] text-warn">{t.status === "skipped" ? "预估压缩收益不足，已终止" : "已手动终止"}</div>
           )}
+          {t.status === "failed" && <div className="text-[12px] text-warn">压缩失败，请查看日志</div>}
         </div>
 
-        {/* 模式（运行中变灰） */}
+        {/* 模式（运行中变灰；已完成锁定不可改——已压完的模式改也无意义） */}
         <div>
-          {t.status === "queued" || t.status === "done" || t.status === "stopped" ? (
+          {t.status === "queued" || t.status === "stopped" || t.status === "skipped" || t.status === "failed" ? (
             <Select value={t.mode} onChange={(m) => onMode(m)} options={COMPRESS_MODES} className="w-full" />
           ) : (
             <Select value={t.mode} onChange={() => {}} options={COMPRESS_MODES} disabled className="w-full" />
@@ -117,8 +131,8 @@ function CmpRow({
               <Icon d="M7 7h10v10H7z" size={18} />
             </IconBtn>
           )}
-          {t.status === "stopped" && (
-            <IconBtn tip="重新压缩" onClick={() => onRestart(t)}>
+          {(t.status === "stopped" || t.status === "failed") && (
+            <IconBtn tip="重新压缩（排到队尾）" onClick={() => onRestart(t)}>
               <Icon d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 0 0-14.9-2M4 15a8 8 0 0 0 14.9 2" size={18} />
             </IconBtn>
           )}
@@ -174,16 +188,16 @@ function CmpRow({
 
 /* ============ 压缩面板 ============ */
 export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: number }) {
-  const [tasks, setTasks] = useState<CmpTask[]>(MOCK_CMP);
+  const [tasks, setTasks] = useState<CmpTask[]>([]);
   const [defMode, setDefMode] = useState("default");
   const [shutdown, setShutdown] = useState(false);
   const [fileOver, setFileOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const engine = useEngine();
   const show = useTip();
 
   const move = (id: string, fn: (t: CmpTask) => CmpTask) =>
     setTasks((prev) => prev.map((t) => (t.id === id ? fn(t) : t)));
-
-  const setStatus = (id: string, status: CmpTask["status"]) => move(id, (t) => ({ ...t, status }));
 
   const top = (id: string) =>
     setTasks((prev) => {
@@ -198,24 +212,75 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
 
   const remove = (id: string) => setTasks((prev) => prev.filter((t) => t.id !== id));
 
-  const addMock = () => {
+  const appendTasks = (items: { path: string; name: string }[]) =>
     setTasks((prev) => [
       ...prev,
-      {
-        id: `c${Date.now()}`,
-        name: `新增视频-${Math.floor(Math.random() * 99) + 1}.mkv`,
-        status: "queued",
-        orig: Math.round((300 + Math.random() * 500) * 1024 ** 2),
+      ...items.map((it, i) => ({
+        id: `c${Date.now()}${i}`,
+        name: it.name,
+        path: it.path,
+        status: "queued" as const,
+        orig: 0,
         mode: defMode,
-      },
+      })),
     ]);
+
+  /* 添加视频（系统文件对话框） */
+  const pickVideos = async () => {
+    const sel = await open({
+      multiple: true,
+      filters: [{ name: "视频", extensions: ["mp4", "mkv", "webm", "mov", "avi", "flv", "ts", "m4v"] }],
+    });
+    if (!sel) return;
+    const paths = (Array.isArray(sel) ? sel : [sel]).filter(Boolean) as string[];
+    appendTasks(paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p })));
   };
+
+  /* 添加文件夹（递归枚举视频） */
+  const pickFolder = async () => {
+    const dir = await open({ directory: true });
+    if (!dir) return;
+    setBusy(true);
+    try {
+      const r = (await engine.call("cmp_scan_dir", { path: dir })) as { files?: string[] };
+      const files = r?.files ?? [];
+      appendTasks(files.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p })));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* 拖入文件：Tauri 会拦截原生 HTML 拖拽，用 webview 的 onDragDropEvent 拿真实路径 */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === "over") {
+          setFileOver(true);
+        } else if (event.payload.type === "drop") {
+          setFileOver(false);
+          const paths = event.payload.paths;
+          if (paths.length > 0) {
+            appendTasks(paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p })));
+          }
+        } else {
+          setFileOver(false);
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* 排序分区：压缩中固定顶部不动；排队中可拖拽排序；完成/终止固定底部 */
   const runningTasks = tasks.filter((t) => t.status === "running");
   const queuedTasks = tasks.filter((t) => t.status === "queued");
   const endedTasks = tasks.filter(
-    (t) => t.status === "done" || t.status === "stopped" || t.status === "skipped",
+    (t) => t.status === "done" || t.status === "stopped" || t.status === "skipped" || t.status === "failed",
   );
 
   /* 拖拽排序（自定义指针实现：拎起浮行 + 其他行平滑挤开），仅作用于排队区 */
@@ -232,51 +297,96 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
 
   const runningCount = runningTasks.length;
 
-  const handleDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
-      setFileOver(true);
+  /* 开始压缩：按空闲线程数启动队首任务（每个任务独立 cmp_add，绑 cmpId） */
+  const startCompress = () => {
+    const free = Math.max(0, compressWorkers - runningCount);
+    const targets = queuedTasks.slice(0, free);
+    if (targets.length === 0) return;
+    const ts = Date.now();
+    targets.forEach((t, i) => {
+      engine
+        .call("cmp_add", {
+          path: t.path,
+          mode: t.mode,
+          out_dir: null,
+          cover_sec: null,
+          overwrite: false,
+        })
+        .then((r) => {
+          const cid = (r as { cmp_id?: number }).cmp_id;
+          setTasks((prev) =>
+            prev.map((x) => (x.id === t.id ? { ...x, cmpId: cid, status: "running", pct: 0, startTs: ts + i } : x)),
+          );
+        });
+    });
+  };
+
+  /* 终止：发引擎停止（引擎回 stopped 事件驱动状态） */
+  const stopTask = (t: CmpTask) => {
+    if (t.cmpId != null) {
+      engine.call("cmp_stop", { id: t.cmpId });
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      e.preventDefault();
-      setFileOver(false);
-      setTasks((prev) => [
-        ...prev,
-        ...Array.from(files).map((f, i) => ({
-          id: `c${Date.now()}${i}`,
-          name: f.name || `拖入文件-${i + 1}`,
-          status: "queued" as const,
-          orig: 0,
-          mode: defMode,
-        })),
-      ]);
-      return;
-    }
-    const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/uri-list");
-    if (text.trim()) {
-      e.preventDefault();
-      setTasks((prev) => [
-        ...prev,
-        { id: `c${Date.now()}`, name: text.trim().split("/").pop() || text.trim(), status: "queued" as const, orig: 0, mode: defMode },
-      ]);
-    }
+  /* 重新压缩：重置为排队，放到队尾 */
+  const restartTask = (t: CmpTask) => {
+    setTasks((prev) => [
+      ...prev.filter((x) => x.id !== t.id),
+      { ...t, status: "queued", cmpId: undefined, pct: undefined, pos: undefined, dur: undefined, outSize: undefined, ratio: undefined, elapsed: undefined, startTs: undefined },
+    ]);
   };
+
+  /* 引擎压缩事件流驱动 */
+  useEffect(() => {
+    return engine.on((ev) => {
+      if (ev.ev !== "cmp") return;
+      const e = ev as {
+        id: number;
+        state: string;
+        pct?: number;
+        pos?: string;
+        dur?: string;
+        eta?: number | null;
+        orig?: number;
+        outSize?: number;
+        ratio?: number;
+      };
+      const cid = Number(e.id);
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.cmpId !== cid) return t;
+          switch (e.state) {
+            case "started":
+              return { ...t, orig: e.orig ?? t.orig };
+            case "compressing":
+              return { ...t, status: "running", pct: e.pct, pos: e.pos, dur: e.dur, etaSec: e.eta ?? undefined };
+            case "done": {
+              const el = t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000) : undefined;
+              return { ...t, status: "done", outSize: e.outSize, ratio: e.ratio, orig: e.orig ?? t.orig, elapsed: el, pct: 100 };
+            }
+            case "failed":
+              return { ...t, status: "failed", pct: undefined };
+            case "stopped":
+              return { ...t, status: "stopped", pct: undefined };
+            default:
+              return t;
+          }
+        }),
+      );
+    });
+  }, [engine]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* 工具条 */}
       <div className="shrink-0 p-4 pb-3 flex items-center gap-2">
-        <Button variant="soft" onClick={addMock}>
+        <Button variant="soft" onClick={pickVideos} disabled={busy}>
           <Icon d="M12 5v14M5 12h14" size={14} />
           添加视频
         </Button>
-        <Button variant="soft" onClick={addMock} onMouseEnter={(e) => show(e.currentTarget, "递归添加文件夹内全部视频")}>
+        <Button variant="soft" onClick={pickFolder} onMouseEnter={(e) => show(e.currentTarget, "递归添加文件夹内全部视频")} disabled={busy}>
           <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={14} />
-          添加文件夹
+          {busy ? "扫描中…" : "添加文件夹"}
         </Button>
 
         <div className="flex items-center gap-1.5 ml-2 text-[12px] text-text-sub">
@@ -286,11 +396,11 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
 
         <div className="flex-1" />
 
-        <Button onClick={addMock} disabled={runningCount >= compressWorkers}>
+        <Button onClick={startCompress} disabled={queuedTasks.length === 0 || runningCount >= compressWorkers}>
           <Icon d="M8 5v14l11-7z" size={13} />
           开始压缩
         </Button>
-        <Button variant="ghost" onClick={() => setTasks((p) => p.filter((t) => t.status !== "done" && t.status !== "stopped"))}>
+        <Button variant="ghost" onClick={() => setTasks((p) => p.filter((t) => t.status !== "done" && t.status !== "stopped" && t.status !== "failed" && t.status !== "skipped"))}>
           清空已完成
         </Button>
       </div>
@@ -304,11 +414,6 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
           <div className="text-[11px] text-text-sub">可拖入文件 · 排队中可拖动调整优先级</div>
         </div>
         <div
-          onDragOver={handleDragOver}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setFileOver(false);
-          }}
-          onDrop={handleDrop}
           className={`relative flex-1 min-h-0 overflow-y-auto pr-1 rounded-lg transition-colors ${
             fileOver ? "bg-brand-50 ring-2 ring-brand-400/70 ring-inset" : ""
           }`}
@@ -326,8 +431,8 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
                   key={t.id}
                   t={t}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                  onStop={(x) => setStatus(x.id, "stopped")}
-                  onRestart={(x) => setStatus(x.id, "queued")}
+                  onStop={stopTask}
+                  onRestart={restartTask}
                   onTop={(x) => top(x.id)}
                   onDelete={(x) => remove(x.id)}
                 />
@@ -341,8 +446,8 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
                       key={t.id}
                       t={t}
                       onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                      onStop={(x) => setStatus(x.id, "stopped")}
-                      onRestart={(x) => setStatus(x.id, "queued")}
+                      onStop={stopTask}
+                      onRestart={restartTask}
                       onTop={(x) => top(x.id)}
                       onDelete={(x) => remove(x.id)}
                       drag={{
@@ -359,8 +464,8 @@ export function CompressPanel({ compressWorkers = 3 }: { compressWorkers?: numbe
                   key={t.id}
                   t={t}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                  onStop={(x) => setStatus(x.id, "stopped")}
-                  onRestart={(x) => setStatus(x.id, "queued")}
+                  onStop={stopTask}
+                  onRestart={restartTask}
                   onTop={(x) => top(x.id)}
                   onDelete={(x) => remove(x.id)}
                 />

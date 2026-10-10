@@ -23,7 +23,9 @@ export type DlTask = {
 export type CmpTask = {
   id: string;
   name: string;
-  status: "running" | "queued" | "done" | "stopped" | "skipped";
+  path?: string;
+  cmpId?: number;
+  status: "running" | "queued" | "done" | "stopped" | "skipped" | "failed";
   orig: number;
   mode: string;
   pct?: number;
@@ -33,6 +35,7 @@ export type CmpTask = {
   outSize?: number;
   ratio?: number;
   elapsed?: string;
+  startTs?: number;
 };
 
 export const MOCK_FORMATS: DlFormat[] = [
