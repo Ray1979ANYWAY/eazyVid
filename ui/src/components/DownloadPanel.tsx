@@ -240,16 +240,16 @@ export function DownloadPanel({
     if (!ctx) return [];
     const { t } = ctx;
     const p = t.path || "";
-    if (!p) return [];
     const items: CtxItem[] = [];
-    if (t.status === "done") {
+    if (t.status === "done" && p) {
       items.push({ label: "打开文件", onClick: () => openPath(p).catch(() => {}) });
     }
     items.push({
       label: "打开所在目录",
       onClick: () => {
-        const dir = p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/")));
-        revealItemInDir(p).catch(() => openPath(dir).catch(() => {}));
+        const dir = p ? p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"))) : dlDir;
+        if (p) revealItemInDir(p).catch(() => (dir ? openPath(dir).catch(() => {}) : undefined));
+        else if (dir) openPath(dir).catch(() => {});
       },
     });
     return items;
