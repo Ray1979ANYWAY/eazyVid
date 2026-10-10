@@ -916,3 +916,12 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 修复：两面板**同时常驻挂载**，外层包 `hidden`/`h-full` 用 display 切换。切换面板任务列表 state 完整保留，压缩任务在后台继续，切回即见。
 - 已知边界：HMR/重启会重置前端任务列表（引擎无任务列表同步接口，后续可加 cmp_list/dl_list）。
 - tsc 全绿。
+### 2026-10-10 迭代（设置面板真实挂载 + 持久化）
+- 设置弹窗此前全为硬编码（dlDir 写死、outSame/overwrite/cover 固定 true、coverSec=5、浏览按钮空函数），值与引擎完全脱钩。
+- 挂载完成：
+  - Settings 扩展：dlWorkers/compressWorkers/dlDir/outSame/outDir/overwrite/cover/coverSec；localStorage（key eazyvid.settings.v1）持久化，损坏时回退默认。
+  - 下载目录/指定输出目录浏览 → tauri dialog 原生文件夹选择器（@tauri-apps/plugin-dialog，权限 dialog:default 已配）。
+  - DownloadPanel dl_add 传 out_dir=dlDir（空=引擎默认 downloaded）。
+  - CompressPanel cmp_add 传真实值：out_dir = outSame?null:(outDir||null)；cover_sec = (overwrite&&cover)?coverSec:null；overwrite = overwrite&&outSame。引擎侧 _compress_worker 语义确认（out_dir None=同目录、cover_sec None=不设封面、overwrite done 后 os.replace 覆盖含扩展名）。
+  - 联动保持：overwrite 仅 outSame 可开；cover 仅 overwrite 可开；coverSec NumberField 支持 0（首帧）。
+- tsc 全绿；HMR 即时生效。

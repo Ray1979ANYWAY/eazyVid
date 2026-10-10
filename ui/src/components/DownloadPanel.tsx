@@ -210,9 +210,11 @@ function DlRow({
 /* ============ 下载面板 ============ */
 export function DownloadPanel({
   dlWorkers = 3,
+  dlDir = "",
   onActivityChange,
 }: {
   dlWorkers?: number;
+  dlDir?: string;
   onActivityChange?: (busy: boolean, fail: boolean) => void;
 }) {
   const [url, setUrl] = useState("");
@@ -322,7 +324,7 @@ export function DownloadPanel({
     void engine.call("dl_add", {
       url: url.trim(),
       fmt_id: f.id,
-      out_dir: "",
+      out_dir: dlDir,
       title: "",
       size: 0,
       workers: dlWorkers,

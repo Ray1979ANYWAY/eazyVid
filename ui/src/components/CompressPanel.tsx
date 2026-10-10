@@ -189,9 +189,19 @@ function CmpRow({
 /* ============ 压缩面板 ============ */
 export function CompressPanel({
   compressWorkers = 3,
+  outSame = true,
+  outDir = "",
+  overwrite = false,
+  cover = false,
+  coverSec = 5,
   onActivityChange,
 }: {
   compressWorkers?: number;
+  outSame?: boolean;
+  outDir?: string;
+  overwrite?: boolean;
+  cover?: boolean;
+  coverSec?: number;
   onActivityChange?: (busy: boolean, fail: boolean) => void;
 }) {
   const [tasks, setTasks] = useState<CmpTask[]>([]);
@@ -319,13 +329,14 @@ export function CompressPanel({
     if (targets.length === 0) return;
     const ts = Date.now();
     targets.forEach((t, i) => {
+      const doOverwrite = overwrite && outSame; // 覆盖仅"与原文件同目录"可用
       engine
         .call("cmp_add", {
           path: t.path,
           mode: t.mode,
-          out_dir: null,
-          cover_sec: null,
-          overwrite: false,
+          out_dir: outSame ? null : outDir || null,
+          cover_sec: doOverwrite && cover ? coverSec : null,
+          overwrite: doOverwrite,
         })
         .then((r) => {
           const cid = (r as { cmp_id?: number }).cmp_id;
