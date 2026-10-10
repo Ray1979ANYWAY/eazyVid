@@ -367,40 +367,76 @@ def _cmd_ffmpeg_check(req):
 
 def _cmd_ffmpeg_update(req):
     """一键更新 ffmpeg 到最新稳定版（gyan.dev release-full.7z，Windows 官方推荐构建）：
-    下载（带进度事件）→ Windows 自带 bsdtar 解 7z → 备份旧版 → 替换 → 验证版本 → 清理临时文件。
-    任一步失败：恢复旧版备份并清理临时目录，返回错误。"""
+    下载（带进度事件，已下载的 7z 保留供重试复用）→ 解压（优先 7-Zip，其次 bsdtar）→
+    备份旧版 → 替换 → 验证版本 → 清理临时文件。任一步失败：恢复旧版备份并报错。"""
     script = eazyvid.SCRIPT_DIR
     tmp = os.path.join(script, "ffmpeg_update_tmp")
+    dst = os.path.join(tmp, "ffmpeg.7z")
+    SZ = r"C:\Program Files\7-Zip\7z.exe"
+    use_sz = os.path.exists(SZ)
     FF_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z"
     try:
-        shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp, exist_ok=True)
 
-        # 1. 下载（带进度事件）
-        emit({"ev": "ffmpeg_progress", "stage": "download", "percent": 0})
-        import urllib.request
-        hreq = urllib.request.Request(FF_URL, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(hreq, timeout=30)
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
-        dst = os.path.join(tmp, "ffmpeg.7z")
-        with open(dst, "wb") as f:
-            while True:
-                chunk = resp.read(1 << 16)
-                if not chunk:
-                    break
-                f.write(chunk)
-                got += len(chunk)
-                if total:
-                    emit({"ev": "ffmpeg_progress", "stage": "download",
-                          "percent": min(99, int(got * 100 / total))})
+        # 1. 已有 7z → 先校验完整性；无效或缺失 → 重新下载（失败不清 tmp，重试复用）
+        need_dl = True
+        if os.path.exists(dst) and os.path.getsize(dst) > 1_000_000:
+            try:
+                if use_sz:
+                    r = subprocess.run([SZ, "t", dst], capture_output=True, timeout=120,
+                                       creationflags=NO_WINDOW | 0x00004000)
+                    need_dl = r.returncode != 0
+                else:
+                    need_dl = False  # 无 7-Zip 无法校验，直接用；解压失败再删重下
+            except Exception:
+                need_dl = True
+        if need_dl:
+            emit({"ev": "ffmpeg_progress", "stage": "download", "percent": 0})
+            import urllib.request
+            hreq = urllib.request.Request(FF_URL, headers={"User-Agent": "Mozilla/5.0"})
+            resp = urllib.request.urlopen(hreq, timeout=30)
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            with open(dst, "wb") as f:
+                while True:
+                    chunk = resp.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        emit({"ev": "ffmpeg_progress", "stage": "download",
+                              "percent": min(99, int(got * 100 / total))})
 
-        # 2. 解压（Windows 10+ 自带 bsdtar 支持 7z）
+        # 2. 解压（7-Zip 优先；无 7-Zip 时 bsdtar 兜底——部分 7z 特性 libarchive 不支持会失败）
         emit({"ev": "ffmpeg_progress", "stage": "extract", "percent": 100})
         ex = os.path.join(tmp, "x")
+        shutil.rmtree(ex, ignore_errors=True)
         os.makedirs(ex, exist_ok=True)
-        subprocess.run(["tar", "-xf", dst, "-C", ex], timeout=600,
-                       creationflags=NO_WINDOW | 0x00004000, check=True)
+        ok = False
+        err = ""
+        if use_sz:
+            r = subprocess.run([SZ, "x", dst, f"-o{ex}", "-y"], capture_output=True, text=True,
+                               timeout=600, creationflags=NO_WINDOW | 0x00004000)
+            if r.returncode == 0:
+                ok = True
+            else:
+                err = (r.stdout or "")[-400:] + (r.stderr or "")[-400:]
+        if not ok:
+            r = subprocess.run(["tar", "-xf", dst, "-C", ex], capture_output=True, text=True,
+                               timeout=600, creationflags=NO_WINDOW | 0x00004000)
+            if r.returncode == 0:
+                ok = True
+            else:
+                err = (r.stdout or "")[-400:] + (r.stderr or "")[-400:]
+        if not ok:
+            # 解压失败：7z 可能损坏 → 删除重下；保留 tmp 其他内容
+            if os.path.exists(dst):
+                try:
+                    os.remove(dst)
+                except OSError:
+                    pass
+            raise RuntimeError(f"解压失败: {err[:200]}")
 
         # 3. 定位新构建的 bin 目录
         new_bin = None
@@ -443,7 +479,8 @@ def _cmd_ffmpeg_update(req):
         emit({"ev": "ffmpeg_progress", "stage": "done", "percent": 100})
         reply(req.get("id"), ok=True, version=ver)
     except Exception as e:
-        shutil.rmtree(tmp, ignore_errors=True)
+        # 保留 tmp（已下载的 7z 供重试复用），只清理解压目录
+        shutil.rmtree(os.path.join(tmp, "x"), ignore_errors=True)
         reply(req.get("id"), ok=False, error=f"更新失败: {e}")
 
 
