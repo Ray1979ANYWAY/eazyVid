@@ -247,6 +247,9 @@ def _compress_worker(req, rec):
     with _cmp_lock:
         _cmp_running.pop(rec["id"], None)
     if not ok:
+        # 主动终止（cmp_stop 已杀进程并发 stopped）时不发 failed，避免覆盖终止态
+        if rec.get("stopped"):
+            return
         emit({"ev": "cmp", "id": rec["id"], "state": "failed", "error": "压缩失败，见日志", "mode": mode})
         return
     if not out:
@@ -300,6 +303,7 @@ def _cmd_cmp_stop(req):
         rec = _cmp_running.get(cid)
     if rec and rec.get("proc") is not None:
         eazyvid._kill_proc_tree(rec["proc"])
+        rec["stopped"] = True   # 标记主动终止：worker 察觉进程被杀时不得再发 failed 覆盖 stopped
         # 终止即删半成品输出（用户规则：终止任务应删除压缩一半的文件）
         out = rec.get("out_path")
         if out and os.path.exists(out):

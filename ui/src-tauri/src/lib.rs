@@ -76,8 +76,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             // 点关闭按钮 → 隐藏到托盘（不退出）；真退出走托盘菜单
             if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\win_close.txt", "close-requested\n");
                 api.prevent_close();
-                let _ = window.hide();
+                let r = window.hide();
+                let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\win_close.txt",
+                                       format!("hidden={:?}\n", r));
             }
         })
         .invoke_handler(tauri::generate_handler![

@@ -459,7 +459,8 @@ export function CompressPanel({
               return { ...t, status: "done", outSize: e.outSize, ratio: e.ratio, orig: e.orig ?? t.orig, elapsed: el, pct: 100, outPath: e.out || t.outPath };
             }
             case "failed":
-              return { ...t, status: "failed", pct: undefined };
+              // 主动终止（stopped）后到达的 failed 是竞态残留，保持终止态不覆盖
+              return { ...t, status: t.status === "stopped" ? "stopped" : "failed", pct: undefined };
             case "skipped":
               return {
                 ...t,
