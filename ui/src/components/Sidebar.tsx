@@ -22,10 +22,12 @@ export function Sidebar({
 
   return (
     <aside className="w-[196px] shrink-0 flex flex-col bg-[linear-gradient(180deg,#14185E_0%,#0C34B8_55%,#501A94_100%)]" data-tauri-drag-region>
-      {/* 品牌区 */}
+      {/* 品牌区：子元素 pointer-events-none，点击始终落到拖拽层（Tauri drag-region 只认 target） */}
       <div className="flex items-center gap-2.5 px-4 h-16 border-b border-white/10" data-tauri-drag-region>
-        <Logo size={36} />
-        <div className="text-[19px] font-bold text-white font-display tracking-wide leading-none">eazyVid</div>
+        <div className="pointer-events-none flex items-center gap-2.5">
+          <Logo size={36} />
+          <div className="text-[19px] font-bold text-white font-display tracking-wide leading-none">eazyVid</div>
+        </div>
       </div>
 
       {/* 导航 */}
