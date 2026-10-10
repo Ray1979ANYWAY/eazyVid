@@ -8,8 +8,7 @@ import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 const DL_ROW_H = 62; // 56px 行高 + 6px 间距
 
 /* ============ 格式列表行 ============ */
-function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) => void }) {
-  const [hover, setHover] = useState(false);
+function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) => void }) {  const [hover, setHover] = useState(false);
   const show = useTip();
 
   return (
@@ -232,9 +231,37 @@ export function DownloadPanel({
   const [fileOver, setFileOver] = useState(false);
   const [probeErr, setProbeErr] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; t: DlTask } | null>(null);
+  /* 格式列表表头排序：分辨率/格式/编码/大小 可点击，同列点击翻转方向 */
+  const [sortKey, setSortKey] = useState<{ key: "res" | "ext" | "codec" | "size"; dir: 1 | -1 }>({ key: "res", dir: 1 });
   const show = useTip();
   const inputRef = useRef<HTMLInputElement>(null);
   const engine = useEngine();
+
+  /* 排序辅助：分辨率数字 / 大小字节数 */
+  const resNum = (s: string) => {
+    const m = s.match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : -1;
+  };
+  const sizeBytes = (s: string) => {
+    const m = s.trim().match(/^([\d.]+)\s*(B|KB|MB|GB|TB)?$/i);
+    if (!m) return -1;
+    const n = parseFloat(m[1]);
+    const u = (m[2] || "B").toUpperCase();
+    const mult: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+    return Math.round(n * (mult[u] || 1));
+  };
+  const sortedFormats = useMemo(() => {
+    const arr = [...formats];
+    const { key, dir } = sortKey;
+    arr.sort((a, b) => {
+      if (key === "res") return (resNum(a.res) - resNum(b.res)) * dir;
+      if (key === "size") return (sizeBytes(a.size) - sizeBytes(b.size)) * dir;
+      return a[key].localeCompare(b[key]) * dir;
+    });
+    return arr;
+  }, [formats, sortKey]);
+  const toggleSort = (key: "res" | "ext" | "codec" | "size") =>
+    setSortKey((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
 
   /* 行右键：已完成 = 打开文件 + 打开所在目录；其余 = 打开所在目录 */
   const openCtx = (e: React.MouseEvent, t: DlTask) => {
@@ -484,10 +511,22 @@ export function DownloadPanel({
       <div className="shrink-0 px-4 pb-2">
         <div className="rounded-xl border border-border-soft bg-white overflow-hidden">
           <div className="grid grid-cols-[90px_70px_80px_100px_1fr_72px] items-center h-8 px-3 bg-surface text-[11px] text-text-sub font-medium">
-            <div>分辨率</div>
-            <div>格式</div>
-            <div>编码</div>
-            <div>大小</div>
+            <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("res")}>
+              分辨率
+              <span className="text-[9px] leading-none">{sortKey.key === "res" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+            </button>
+            <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("ext")}>
+              格式
+              <span className="text-[9px] leading-none">{sortKey.key === "ext" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+            </button>
+            <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("codec")}>
+              编码
+              <span className="text-[9px] leading-none">{sortKey.key === "codec" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+            </button>
+            <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("size")}>
+              大小
+              <span className="text-[9px] leading-none">{sortKey.key === "size" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+            </button>
             <div>提示</div>
             <div className="text-right pr-1">操作</div>
           </div>
@@ -510,7 +549,7 @@ export function DownloadPanel({
               </div>
             ) : (
               <div className="py-1">
-                {formats.map((f) => (
+                {sortedFormats.map((f) => (
                   <FormatRow key={f.id} f={f} onDownload={addTask} />
                 ))}
               </div>
