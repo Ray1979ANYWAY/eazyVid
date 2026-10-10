@@ -36,11 +36,13 @@ function App() {
           onSettings={() => setSettingsOpen(true)}
         />
         <main className="flex-1 min-w-0 min-h-0 pt-11">
-          {panel === "download" ? (
+          {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
+          <div className={panel === "download" ? "h-full" : "hidden"}>
             <DownloadPanel dlWorkers={settings.dlWorkers} onActivityChange={(b, f) => setDlAct({ busy: b, fail: f })} />
-          ) : (
+          </div>
+          <div className={panel === "compress" ? "h-full" : "hidden"}>
             <CompressPanel compressWorkers={settings.compressWorkers} onActivityChange={(b, f) => setCmpAct({ busy: b, fail: f })} />
-          )}
+          </div>
         </main>
       </div>
       <WindowControls />

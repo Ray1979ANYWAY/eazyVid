@@ -911,3 +911,8 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 格式列表原为 shrink-0 无限撑高（YouTube 40+ 格式会把下载池挤没）。改为：表头固定 + 内容区 `max-h-[300px] overflow-y-auto`（约 5 行格式后滚动）。
 - 下载池已有 `flex-1 min-h-0 overflow-y-auto`（随窗口自适应、超出滚动），高度链验证完整（main flex-1 min-h-0 → 面板根 h-full min-h-0）。
 - tsc 全绿；vite HMR 即时生效。
+### 2026-10-10 迭代（双面板常驻挂载，切换不丢任务）
+- 根因：App 原用 `panel === "download" ? <A/> : <B/>` 条件渲染——切面板时另一面板**卸载**，内部 useState 任务列表全部丢失；引擎仍在后台跑，UI 已空。
+- 修复：两面板**同时常驻挂载**，外层包 `hidden`/`h-full` 用 display 切换。切换面板任务列表 state 完整保留，压缩任务在后台继续，切回即见。
+- 已知边界：HMR/重启会重置前端任务列表（引擎无任务列表同步接口，后续可加 cmp_list/dl_list）。
+- tsc 全绿。
