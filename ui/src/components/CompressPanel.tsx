@@ -231,7 +231,7 @@ export function CompressPanel({
   overwrite?: boolean;
   cover?: boolean;
   coverSec?: number;
-  onActivityChange?: (busy: boolean, fail: boolean) => void;
+  onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
 }) {
   const [tasks, setTasks] = useState<CmpTask[]>([]);
   const [defMode, setDefMode] = useState("default");
@@ -271,13 +271,13 @@ export function CompressPanel({
     return items;
   };
 
-  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄） */
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，退出确认用） */
   const actRef = useRef(onActivityChange);
   actRef.current = onActivityChange;
   useEffect(() => {
-    const running = tasks.some((t) => t.status === "running");
+    const running = tasks.filter((t) => t.status === "running").length;
     const fail = tasks.some((t) => t.status === "failed" || t.status === "skipped");
-    actRef.current?.(running, fail);
+    actRef.current?.(running > 0, fail, running);
   }, [tasks]);
 
   const move = (id: string, fn: (t: CmpTask) => CmpTask) =>

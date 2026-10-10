@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Sidebar, type Panel } from "./components/Sidebar";
 import { DownloadPanel } from "./components/DownloadPanel";
 import { CompressPanel } from "./components/CompressPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { WindowControls } from "./components/WindowControls";
-import { TipProvider } from "./components/ui";
+import { TipProvider, Dialog, Button } from "./components/ui";
 
 export type Settings = {
   dlWorkers: number;
@@ -55,12 +57,29 @@ function App() {
   }, [settings]);
 
   // 面板活动状态（面板组件上报）：有运行任务=绿闪、有失败=黄，与选中状态无关
-  const [dlAct, setDlAct] = useState({ busy: false, fail: false });
-  const [cmpAct, setCmpAct] = useState({ busy: false, fail: false });
+  const [dlAct, setDlAct] = useState({ busy: false, fail: false, running: 0 });
+  const [cmpAct, setCmpAct] = useState({ busy: false, fail: false, running: 0 });
+  const [quitWarn, setQuitWarn] = useState(false);
   const dotOf = (act: { busy: boolean; fail: boolean }, selected: boolean) =>
     act.fail ? "fail" : act.busy ? "busy" : selected ? "active" : "idle";
   const dlDot = dotOf(dlAct, panel === "download");
   const cmpDot = dotOf(cmpAct, panel === "compress");
+
+  /* 托盘"退出"：先检查进行中任务 → 有则弹确认（未完成任务文件将被删除），无则直接退出 */
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen("app:quit-request", () => {
+      const running = dlAct.running + cmpAct.running;
+      if (running > 0) setQuitWarn(true);
+      else void invoke("quit_confirmed");
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, [dlAct.running, cmpAct.running]);
+
+  const confirmQuit = () => {
+    setQuitWarn(false);
+    void invoke("quit_confirmed");
+  };
 
   return (
     <TipProvider>
@@ -79,7 +98,7 @@ function App() {
             <DownloadPanel
               dlWorkers={settings.dlWorkers}
               dlDir={settings.dlDir}
-              onActivityChange={(b, f) => setDlAct({ busy: b, fail: f })}
+              onActivityChange={(b, f, running) => setDlAct({ busy: b, fail: f, running })}
             />
           </div>
           <div className={panel === "compress" ? "h-full" : "hidden"}>
@@ -90,7 +109,7 @@ function App() {
               overwrite={settings.overwrite}
               cover={settings.cover}
               coverSec={settings.coverSec}
-              onActivityChange={(b, f) => setCmpAct({ busy: b, fail: f })}
+              onActivityChange={(b, f, running) => setCmpAct({ busy: b, fail: f, running })}
             />
           </div>
         </main>
@@ -102,6 +121,26 @@ function App() {
         settings={settings}
         onChange={setSettings}
       />
+      {/* 托盘"退出"且任务进行中：警告弹窗（未完成任务的文件将被删除，源文件保留） */}
+      <Dialog open={quitWarn} onClose={() => setQuitWarn(false)} title="任务进行中" width={480}>
+        <div className="text-[13px] leading-relaxed text-text-main">
+          <p>
+            当前有 <span className="font-semibold text-brand-700">{dlAct.running + cmpAct.running}</span>{" "}
+            个任务正在进行或暂停（下载 {dlAct.running} 个、压缩 {cmpAct.running} 个）。
+          </p>
+          <p className="mt-2">
+            退出会中断这些任务，未完成任务的文件将被删除：压缩的中间输出、下载的临时缓存都会被清除（源文件保留）。
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setQuitWarn(false)}>
+            取消
+          </Button>
+          <Button variant="danger" onClick={confirmQuit}>
+            确定退出
+          </Button>
+        </div>
+      </Dialog>
     </TipProvider>
   );
 }

@@ -4,12 +4,19 @@ use engine::Engine;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+/// 前端确认退出（任务进行中的警告已由前端弹窗确认）→ 清引擎进程树 + 退出
+#[tauri::command]
+fn quit_confirmed(app: tauri::AppHandle) {
+    Engine::shutdown(&app);
+    app.exit(0);
 }
 
 fn show_main(app: &tauri::AppHandle) {
@@ -46,9 +53,8 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main(app),
                     "quit" => {
-                        // 先清引擎进程树（含 yt-dlp/ffmpeg），再退出
-                        Engine::shutdown(app);
-                        app.exit(0);
+                        // 先让前端检查进行中任务并弹确认（任务进行中必须警告），确认后 invoke quit_confirmed
+                        let _ = app.emit("app:quit-request", ());
                     }
                     _ => {}
                 })
@@ -72,7 +78,12 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![greet, engine::engine_send, engine::engine_restart])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            engine::engine_send,
+            engine::engine_restart,
+            quit_confirmed
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

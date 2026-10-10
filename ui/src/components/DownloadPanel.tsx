@@ -237,7 +237,7 @@ export function DownloadPanel({
 }: {
   dlWorkers?: number;
   dlDir?: string;
-  onActivityChange?: (busy: boolean, fail: boolean) => void;
+  onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
 }) {
   const [url, setUrl] = useState("");
   const [probeState, setProbeState] = useState<"idle" | "probing" | "done">("idle");
@@ -467,13 +467,14 @@ export function DownloadPanel({
 
   const doneCount = useMemo(() => tasks.filter((t) => t.status === "done").length, [tasks]);
 
-  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄） */
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，退出确认用） */
   const actRef = useRef(onActivityChange);
   actRef.current = onActivityChange;
   useEffect(() => {
     const busy = tasks.some((t) => t.status === "downloading" || t.status === "merging");
     const fail = tasks.some((t) => t.status === "failed");
-    actRef.current?.(busy, fail);
+    const running = tasks.filter((t) => ["downloading", "parsing", "paused", "merging"].includes(t.status)).length;
+    actRef.current?.(busy, fail, running);
   }, [tasks]);
 
   return (

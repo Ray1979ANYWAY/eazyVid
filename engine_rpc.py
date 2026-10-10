@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stdin.reconfigure(encoding="utf-8", errors="replace")
@@ -313,7 +314,60 @@ def _cmd_cmp_stop(req):
 
 
 # ---------- 主循环 ----------
+def _cmd_quit(req=None):
+    """退出清理：杀干净所有下载/压缩子进程 + 清理临时文件（.part 缓存、压缩半成品）"""
+    if _dl_pool:
+        for t in list(_dl_pool.tasks):
+            eazyvid._kill_proc_tree(t.proc)
+            if t.tmpdir and os.path.isdir(t.tmpdir):
+                import shutil as _sh
+                _sh.rmtree(t.tmpdir, ignore_errors=True)
+    with _cmp_lock:
+        for rec in _cmp_running.values():
+            eazyvid._kill_proc_tree(rec.get("proc"))
+            # 删除压缩到一半的不完整输出（同"终止"语义，重试抗文件锁定）
+            op = rec.get("out_path")
+            if op:
+                for _ in range(3):
+                    try:
+                        if os.path.exists(op):
+                            os.remove(op)
+                        break
+                    except OSError:
+                        time.sleep(0.2)
+    emit({"ev": "bye"})
+
+
+def _cleanup_stale_tmpdirs():
+    """启动时清理意外中断（断电/强杀）残留的下载临时目录：>10 分钟、非当前进程的 .eazyvid_ 目录"""
+    try:
+        cur = os.getpid()
+        cutoff = time.time() - 600
+        bases = {os.path.dirname(os.path.abspath(__file__)),
+                 os.path.join(os.path.expanduser("~"), "Downloads")}
+        for base in bases:
+            if not os.path.isdir(base):
+                continue
+            for d in os.listdir(base):
+                if not d.startswith(".eazyvid_"):
+                    continue
+                if f"_{cur}" in d:
+                    continue
+                p = os.path.join(base, d)
+                try:
+                    if os.path.isdir(p) and os.path.getmtime(p) < cutoff:
+                        import shutil as _sh
+                        _sh.rmtree(p, ignore_errors=True)
+                        _trace("ev", {"ev": "cleanup", "removed": p})
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def main():
+    # 启动清理：意外中断（断电/强杀）残留的下载 .eazyvid_ 临时目录
+    _cleanup_stale_tmpdirs()
     emit({"ev": "ready", "pid": os.getpid(),
           "ytdlp": os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt-dlp.exe"),
           "ffmpeg": os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg.exe")})
@@ -362,17 +416,7 @@ def main():
             elif cmd == "cmp_scan_dir":
                 _cmd_cmp_scan_dir(req)
             elif cmd == "quit":
-                # 杀干净所有下载/压缩子进程 + 清理临时目录残留
-                if _dl_pool:
-                    for t in list(_dl_pool.tasks):
-                        eazyvid._kill_proc_tree(t.proc)
-                        if t.tmpdir and os.path.isdir(t.tmpdir):
-                            import shutil as _sh
-                            _sh.rmtree(t.tmpdir, ignore_errors=True)
-                with _cmp_lock:
-                    for rec in _cmp_running.values():
-                        eazyvid._kill_proc_tree(rec.get("proc"))
-                emit({"ev": "bye"})
+                _cmd_quit()
                 break
             else:
                 reply(req.get("id"), ok=False, error=f"未知命令: {cmd}")
