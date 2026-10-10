@@ -907,3 +907,7 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 判定：下载 busy = downloading/merging，fail = failed；压缩 busy = running，fail = failed/skipped。
 - App 圆点优先级：**fail（黄，持续）> busy（绿，呼吸闪）> 选中（黑）/未选中（灰）**——无论面板是否选中，只要有任务运行就闪绿、有失败就黄；选中指示靠按钮底色（bg-white/15），不再被 mock 黑点占用。
 - tsc 全绿；vite HMR 即时生效。
+### 2026-10-10 迭代（格式列表最大高度 + 滚动条）
+- 格式列表原为 shrink-0 无限撑高（YouTube 40+ 格式会把下载池挤没）。改为：表头固定 + 内容区 `max-h-[300px] overflow-y-auto`（约 5 行格式后滚动）。
+- 下载池已有 `flex-1 min-h-0 overflow-y-auto`（随窗口自适应、超出滚动），高度链验证完整（main flex-1 min-h-0 → 面板根 h-full min-h-0）。
+- tsc 全绿；vite HMR 即时生效。

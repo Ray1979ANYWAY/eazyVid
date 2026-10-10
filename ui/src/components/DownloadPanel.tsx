@@ -441,7 +441,7 @@ export function DownloadPanel({
         </div>
       </div>
 
-      {/* 格式列表（常驻区域：未探测时为空态提示） */}
+      {/* 格式列表（常驻区域：未探测时为空态提示；超 300px 内容区滚动，表头固定） */}
       <div className="shrink-0 px-4 pb-2">
         <div className="rounded-xl border border-border-soft bg-white overflow-hidden">
           <div className="grid grid-cols-[90px_70px_80px_100px_1fr_72px] items-center h-8 px-3 bg-surface text-[11px] text-text-sub font-medium">
@@ -452,29 +452,31 @@ export function DownloadPanel({
             <div>提示</div>
             <div className="text-right pr-1">操作</div>
           </div>
-          {formats.length === 0 ? (
-            <div className="flex items-center justify-center h-14 text-[12px] text-text-sub/70 gap-1.5">
-              {probeState === "probing" ? (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
-                    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25" />
-                    <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                  </svg>
-                  正在解析可用格式…
-                </>
-              ) : probeErr ? (
-                <span className="text-warn">探测失败：{probeErr}</span>
-              ) : (
-                <>点击「探测格式」后，可用格式将显示在这里</>
-              )}
-            </div>
-          ) : (
-            <div className="py-1">
-              {formats.map((f) => (
-                <FormatRow key={f.id} f={f} onDownload={addTask} />
-              ))}
-            </div>
-          )}
+          <div className="max-h-[300px] overflow-y-auto">
+            {formats.length === 0 ? (
+              <div className="flex items-center justify-center h-14 text-[12px] text-text-sub/70 gap-1.5">
+                {probeState === "probing" ? (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
+                      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                      <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                    </svg>
+                    正在解析可用格式…
+                  </>
+                ) : probeErr ? (
+                  <span className="text-warn">探测失败：{probeErr}</span>
+                ) : (
+                  <>点击「探测格式」后，可用格式将显示在这里</>
+                )}
+              </div>
+            ) : (
+              <div className="py-1">
+                {formats.map((f) => (
+                  <FormatRow key={f.id} f={f} onDownload={addTask} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
