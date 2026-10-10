@@ -305,17 +305,22 @@ export function CompressPanel({
   };
 
   const appendTasks = (items: { path: string; name: string }[]) =>
-    setTasks((prev) => [
-      ...prev,
-      ...items.map((it, i) => ({
-        id: `c${Date.now()}${i}`,
-        name: it.name,
-        path: it.path,
-        status: "queued" as const,
-        orig: 0,
-        mode: defMode,
-      })),
-    ]);
+    setTasks((prev) => {
+      /* 同一路径不重复入列（拖拽/多选可能重复触发） */
+      const existing = new Set(prev.map((t) => t.path));
+      const fresh = items.filter((it) => it.path && !existing.has(it.path));
+      return [
+        ...prev,
+        ...fresh.map((it, i) => ({
+          id: `c${Date.now()}${i}`,
+          name: it.name,
+          path: it.path,
+          status: "queued" as const,
+          orig: 0,
+          mode: defMode,
+        })),
+      ];
+    });
 
   /* 添加视频（系统文件对话框） */
   const pickVideos = async () => {
@@ -343,6 +348,7 @@ export function CompressPanel({
   };
 
   /* 拖入文件：Tauri 会拦截原生 HTML 拖拽，用 webview 的 onDragDropEvent 拿真实路径 */
+  const lastDropRef = useRef(0);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     getCurrentWebview()
@@ -351,6 +357,10 @@ export function CompressPanel({
           setFileOver(true);
         } else if (event.payload.type === "drop") {
           setFileOver(false);
+          /* StrictMode 双挂载可能残留双 listener → drop 触发两次；500ms 时间窗去重 */
+          const now = Date.now();
+          if (now - lastDropRef.current < 500) return;
+          lastDropRef.current = now;
           const paths = event.payload.paths;
           if (paths.length > 0) {
             appendTasks(paths.map((p) => ({ path: p, name: p.split(/[\\/]/).pop() || p })));

@@ -502,6 +502,18 @@ export function DownloadPanel({
                 const t = e.clipboardData.getData("text");
                 setUrl(extractUrl(t) || t.trim());
               }}
+              onContextMenu={(e) => {
+                /* 右键单击地址栏 = 立即粘贴（自动提取 URL），不弹系统菜单 */
+                e.preventDefault();
+                void (async () => {
+                  try {
+                    const t = await navigator.clipboard.readText();
+                    setUrl(extractUrl(t) || t.trim());
+                  } catch {
+                    /* clipboard 权限失败时忽略 */
+                  }
+                })();
+              }}
               placeholder="粘贴视频页面地址，回车探测"
               className="w-full h-9 pl-3.5 pr-12 rounded-lg border border-border-soft bg-white text-[13px] text-text-main
                 placeholder:text-text-sub/60 focus:outline-2 focus:outline-brand-500 focus:border-brand-300"
