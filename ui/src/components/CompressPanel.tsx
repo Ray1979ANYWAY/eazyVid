@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip } from "./ui";
+import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip, ContextMenu, type CtxItem } from "./ui";
 import { COMPRESS_MODES, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+
+/* 输出文件路径（与引擎命名一致：源名_compressed.mp4；覆盖模式完成态用 done 事件 out） */
+function outPathOf(t: CmpTask, outSame: boolean, outDir: string): string {
+  if (t.outPath) return t.outPath;
+  if (!t.path) return "";
+  const sep = t.path.includes("\\") ? "\\" : "/";
+  const last = t.path.lastIndexOf(sep);
+  const dir = outSame ? t.path.slice(0, last) : outDir;
+  const file = t.path.slice(last + 1).replace(/\.[^./\\]+$/, "");
+  return `${dir}${sep}${file}_compressed.mp4`;
+}
 
 const ROW_H = 58; // 52px 行高 + 6px 间距
 
@@ -23,6 +35,7 @@ function CmpRow({
   onRestart,
   onTop,
   onDelete,
+  onCtx,
   drag,
 }: {
   t: CmpTask;
@@ -31,6 +44,7 @@ function CmpRow({
   onRestart: (t: CmpTask) => void;
   onTop: (t: CmpTask) => void;
   onDelete: (t: CmpTask) => void;
+  onCtx: (e: React.MouseEvent, t: CmpTask) => void;
   drag?: {
     isDragging: boolean;
     draggingTop: number;
@@ -75,7 +89,10 @@ function CmpRow({
         />
       )}
 
-      <div className="relative grid grid-cols-[1fr_90px_1fr_130px_96px] items-center h-[52px] px-3 gap-2">
+      <div
+        className="relative grid grid-cols-[1fr_90px_1fr_130px_96px] items-center h-[52px] px-3 gap-2"
+        onContextMenu={(e) => onCtx(e, t)}
+      >
         {/* 状态 + 文件名 */}
         <div className="min-w-0" onMouseEnter={(e) => show(e.currentTarget, t.name)}>
           <div className="text-[13px] text-text-main truncate">{t.name}</div>
@@ -206,8 +223,33 @@ export function CompressPanel({
   const [shutdown, setShutdown] = useState(false);
   const [fileOver, setFileOver] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ctx, setCtx] = useState<{ x: number; y: number; t: CmpTask } | null>(null);
   const engine = useEngine();
   const show = useTip();
+
+  /* 行右键：完成态 = 打开文件 + 打开输出目录；其余 = 打开输出目录 */
+  const openCtx = (e: React.MouseEvent, t: CmpTask) => {
+    e.preventDefault();
+    setCtx({ x: e.clientX, y: e.clientY, t });
+  };
+  const ctxItems = (): CtxItem[] => {
+    if (!ctx) return [];
+    const { t } = ctx;
+    const out = outPathOf(t, outSame, outDir);
+    const items: CtxItem[] = [];
+    if (t.status === "done") {
+      items.push({ label: "打开文件", onClick: () => out && openPath(out).catch(() => {}) });
+    }
+    items.push({
+      label: "打开输出目录",
+      onClick: () => {
+        if (!out) return;
+        const dir = out.slice(0, Math.max(out.lastIndexOf("\\"), out.lastIndexOf("/")));
+        revealItemInDir(out).catch(() => openPath(dir).catch(() => {}));
+      },
+    });
+    return items;
+  };
 
   /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄） */
   const actRef = useRef(onActivityChange);
@@ -381,6 +423,7 @@ export function CompressPanel({
         orig?: number;
         outSize?: number;
         ratio?: number;
+        out?: string;
       };
       const cid = Number(e.id);
       setTasks((prev) =>
@@ -393,7 +436,7 @@ export function CompressPanel({
               return { ...t, status: "running", pct: e.pct, pos: e.pos, dur: e.dur, etaSec: e.eta ?? undefined };
             case "done": {
               const el = t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000) : undefined;
-              return { ...t, status: "done", outSize: e.outSize, ratio: e.ratio, orig: e.orig ?? t.orig, elapsed: el, pct: 100 };
+              return { ...t, status: "done", outSize: e.outSize, ratio: e.ratio, orig: e.orig ?? t.orig, elapsed: el, pct: 100, outPath: e.out || t.outPath };
             }
             case "failed":
               return { ...t, status: "failed", pct: undefined };
@@ -461,6 +504,7 @@ export function CompressPanel({
                 <CmpRow
                   key={t.id}
                   t={t}
+                  onCtx={openCtx}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
                   onStop={stopTask}
                   onRestart={restartTask}
@@ -476,6 +520,7 @@ export function CompressPanel({
                     <CmpRow
                       key={t.id}
                       t={t}
+                      onCtx={openCtx}
                       onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
                       onStop={stopTask}
                       onRestart={restartTask}
@@ -494,6 +539,7 @@ export function CompressPanel({
                 <CmpRow
                   key={t.id}
                   t={t}
+                  onCtx={openCtx}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
                   onStop={stopTask}
                   onRestart={restartTask}
@@ -521,6 +567,9 @@ export function CompressPanel({
           <span className="text-[12px] text-text-main">所有任务结束后关机</span>
         </div>
       </div>
+
+      {/* 行右键菜单（光标位置就近弹出） */}
+      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
     </div>
   );
 }

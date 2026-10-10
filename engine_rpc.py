@@ -26,11 +26,24 @@ sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 import eazyvid  # noqa: E402  （项目根模块：探测/下载/压缩引擎）
 
 _lock = threading.Lock()
+_EVT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp", "engine_events.txt")
+_REQ_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp", "engine_reqs.txt")
+
+
+def _trace(kind, obj):
+    """调试探针：引擎事件/请求落盘（tmp/，gitignored）。诊断 UI 链路时用。"""
+    try:
+        os.makedirs(os.path.dirname(_EVT_LOG), exist_ok=True)
+        with open(_EVT_LOG if kind == "ev" else _REQ_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def emit(obj):
     """原子写一行 JSON（多线程安全）"""
     line = json.dumps(obj, ensure_ascii=False)
+    _trace("ev", obj)
     with _lock:
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
@@ -304,6 +317,7 @@ def main():
             emit({"ev": "log", "msg": f"RPC 解析失败: {line[:200]}"})
             continue
         cmd = req.get("cmd")
+        _trace("req", {"id": req.get("id"), "cmd": cmd})
         try:
             if cmd == "ping":
                 reply(req.get("id"), ok=True, pid=os.getpid())

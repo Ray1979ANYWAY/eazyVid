@@ -14,6 +14,7 @@ export type DlTask = {
   id: string;
   taskId?: number;
   name: string;
+  path?: string; // 引擎 out：下载完成后的文件路径
   status: "downloading" | "waiting" | "paused" | "done" | "failed" | "merging";
   got: number;
   total: number;
@@ -36,6 +37,7 @@ export type CmpTask = {
   ratio?: number;
   elapsed?: string;
   startTs?: number;
+  outPath?: string; // 引擎 done 事件携带的实际输出路径（覆盖模式下即替换后的文件）
 };
 
 export const MOCK_FORMATS: DlFormat[] = [

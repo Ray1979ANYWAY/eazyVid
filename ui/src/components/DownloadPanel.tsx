@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, IconBtn, Icon, fmtSize, fmtSpeed, useTip } from "./ui";
+import { Button, IconBtn, Icon, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
 import { type DlFormat, type DlTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 const DL_ROW_H = 62; // 56px 行高 + 6px 间距
 
@@ -61,8 +62,10 @@ function DlRow({
   onResume,
   onRestart,
   onDelete,
+  onCtx,
 }: {
   t: DlTask;
+  onCtx: (e: React.MouseEvent, t: DlTask) => void;
   drag?: {
     isDragging: boolean;
     draggingTop: number;
@@ -111,7 +114,7 @@ function DlRow({
 
       <div
         className="relative grid grid-cols-[1fr_140px_80px_90px_120px] items-center h-14 px-3 gap-2"
-        onContextMenu={(e) => e.preventDefault()}
+        onContextMenu={(e) => onCtx(e, t)}
       >
         {/* 文件名（溢出隐藏，tooltip 完整名） */}
         <div className="min-w-0" onMouseEnter={(e) => show(e.currentTarget, t.name)}>
@@ -223,9 +226,34 @@ export function DownloadPanel({
   const [tasks, setTasks] = useState<DlTask[]>([]);
   const [fileOver, setFileOver] = useState(false);
   const [probeErr, setProbeErr] = useState("");
+  const [ctx, setCtx] = useState<{ x: number; y: number; t: DlTask } | null>(null);
   const show = useTip();
   const inputRef = useRef<HTMLInputElement>(null);
   const engine = useEngine();
+
+  /* 行右键：已完成 = 打开文件 + 打开所在目录；其余 = 打开所在目录 */
+  const openCtx = (e: React.MouseEvent, t: DlTask) => {
+    e.preventDefault();
+    setCtx({ x: e.clientX, y: e.clientY, t });
+  };
+  const ctxItems = (): CtxItem[] => {
+    if (!ctx) return [];
+    const { t } = ctx;
+    const p = t.path || "";
+    if (!p) return [];
+    const items: CtxItem[] = [];
+    if (t.status === "done") {
+      items.push({ label: "打开文件", onClick: () => openPath(p).catch(() => {}) });
+    }
+    items.push({
+      label: "打开所在目录",
+      onClick: () => {
+        const dir = p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/")));
+        revealItemInDir(p).catch(() => openPath(dir).catch(() => {}));
+      },
+    });
+    return items;
+  };
 
   /* 引擎格式 → UI 格式行 */
   const toDlFormat = (f: Record<string, unknown>): DlFormat => {
@@ -340,6 +368,7 @@ export function DownloadPanel({
       if (!Number.isFinite(tid)) return;
       const state = String(e.state) as DlTask["status"];
       const name = String(e.title ?? "");
+      const path = String(e.out ?? "");
       const got = Number(e.got ?? 0);
       const total = Number(e.total ?? 0);
       const speed = String(e.speed ?? "");
@@ -350,9 +379,9 @@ export function DownloadPanel({
       setTasks((prev) => {
         const existing = prev.find((t) => t.taskId === tid);
         if (!existing) {
-          return [...prev, { id: `dl${tid}`, taskId: tid, name: name || `任务 #${tid}`, status: state, got, total, speed }];
+          return [...prev, { id: `dl${tid}`, taskId: tid, name: name || `任务 #${tid}`, path, status: state, got, total, speed }];
         }
-        return prev.map((t) => (t.taskId === tid ? { ...t, name: name || t.name, status: state, got, total, speed } : t));
+        return prev.map((t) => (t.taskId === tid ? { ...t, name: name || t.name, path: path || t.path, status: state, got, total, speed } : t));
       });
     });
   }, [engine]);
@@ -552,6 +581,7 @@ export function DownloadPanel({
                 <DlRow
                   key={t.id}
                   t={t}
+                  onCtx={openCtx}
                   onPause={pause}
                   onDelete={remove}
                 />
@@ -565,6 +595,7 @@ export function DownloadPanel({
                     <DlRow
                       key={t.id}
                       t={t}
+                      onCtx={openCtx}
                       drag={{
                         ...p,
                         onMouseDown: draggable ? (e) => dragSort.onRowMouseDown(e, t.id) : undefined,
@@ -578,12 +609,15 @@ export function DownloadPanel({
               </div>
               {/* 完成：固定底部，不参与拖拽 */}
               {doneTasks.map((t) => (
-                <DlRow key={t.id} t={t} onDelete={remove} />
+                <DlRow key={t.id} t={t} onCtx={openCtx} onDelete={remove} />
               ))}
             </>
           )}
         </div>
       </div>
+
+      {/* 行右键菜单（光标位置就近弹出） */}
+      {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
     </div>
   );
 }

@@ -173,6 +173,50 @@ export function ProgressBar({
   );
 }
 
+/* ============ 右键菜单（光标位置就近弹出）============ */
+export type CtxItem = { label: string; onClick: () => void; danger?: boolean };
+export function ContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  items: CtxItem[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const close = () => onClose();
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("contextmenu", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("contextmenu", close);
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed z-[60]" style={{ left: x, top: y }}>
+      <div className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
+        {items.map((it, i) => (
+          <button
+            key={i}
+            onClick={() => {
+              it.onClick();
+              onClose();
+            }}
+            className={`w-full text-left px-3.5 h-8 text-[12.5px] cursor-pointer hover:bg-brand-50 transition-colors ${it.danger ? "text-danger" : "text-text-main"}`}
+          >
+            {it.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ============ 模态对话框（默认居中）============ */
 export function Dialog({
   open,
