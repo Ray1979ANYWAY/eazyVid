@@ -262,7 +262,10 @@ export function CompressPanel({
       label: "打开输出目录",
       onClick: () => {
         if (!out) return;
-        tryReveal(out, "cmp-reveal");
+        const dir = out.slice(0, Math.max(out.lastIndexOf("\\"), out.lastIndexOf("/")));
+        // 完成态：定位输出文件；未完成：打开输出目录文件夹（输出文件还不存在，reveal 会 FAIL）
+        if (t.status === "done") tryReveal(out, "cmp-reveal");
+        else tryOpen(dir, "cmp-open-dir");
       },
     });
     return items;
