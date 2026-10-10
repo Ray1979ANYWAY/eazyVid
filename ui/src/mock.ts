@@ -15,7 +15,7 @@ export type DlTask = {
   taskId?: number;
   name: string;
   path?: string; // 引擎 out：下载完成后的文件路径
-  status: "downloading" | "waiting" | "paused" | "done" | "failed" | "merging";
+  status: "downloading" | "waiting" | "paused" | "done" | "failed" | "merging" | "parsing";
   got: number;
   total: number;
   speed: number | string;

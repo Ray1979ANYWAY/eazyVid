@@ -83,10 +83,11 @@ function DlRow({
 }) {
   const pct = t.total > 0 ? Math.min(100, (t.got / t.total) * 100) : 0;
   const show = useTip();
-  const isDownloading = t.status === "downloading";
+  const isDownloading = t.status === "downloading" || t.status === "parsing";
 
   const statusText: Record<string, string> = {
     downloading: "下载中",
+    parsing: "解析中…",
     merging: "正在合并音轨，请稍候",
     waiting: "等待下载",
     paused: "已暂停",
@@ -129,7 +130,11 @@ function DlRow({
 
         {/* 进度百分比 */}
         <div className="text-[12px] font-semibold text-brand-700 tabular-nums">
-          {isDownloading ? `${Math.round(pct)}%` : pct >= 100 ? "100%" : "—"}
+          {t.status === "downloading"
+            ? `${Math.round(pct)}%`
+            : t.status === "done" || t.status === "merging"
+              ? "100%"
+              : "—"}
         </div>
 
         {/* 速度 */}
@@ -143,7 +148,7 @@ function DlRow({
 
         {/* 操作（内容层在进度条之上，不被遮挡） */}
         <div className="flex items-center justify-end gap-1">
-          {t.status === "downloading" && (
+          {(t.status === "downloading" || t.status === "parsing") && (
             <IconBtn tip="暂停" onClick={() => onPause?.(t)}>
               <Icon d="M10 4v16M14 4v16" size={18} />
             </IconBtn>
@@ -281,7 +286,9 @@ export function DownloadPanel({
      ① 下载中/合并音轨 固定顶部，不可拖
      ② 等待/暂停/失败 可拖拽排序（有并行数，优先级有意义）
      ③ 完成 固定底部，不可拖 */
-  const activeTasks = tasks.filter((t) => t.status === "downloading" || t.status === "merging");
+  const activeTasks = tasks.filter(
+    (t) => t.status === "downloading" || t.status === "merging" || t.status === "parsing",
+  );
   const sortableTasks = tasks.filter(
     (t) => t.status === "waiting" || t.status === "paused" || t.status === "failed",
   );

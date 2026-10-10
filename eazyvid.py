@@ -889,7 +889,7 @@ class DownloadTask:
             return   # 防重入：已有下载进程在跑，避免同任务双进程（进度互相覆盖、重复下载）
         cmd, self.tmpdir = build_dl_cmd(self.url, self.fmt_arg, self.out_dir, self.task_id,
                                          self.use_cookie, self.referer)
-        self.state = "downloading"
+        self.state = "parsing"   # yt-dlp 启动后先解析视频信息/构建命令，真正开始下载才转 downloading
         # stdin=DEVNULL：yt-dlp 不需要交互输入；父进程若在持续读自己的 stdin（RPC/服务模式），
         # 子进程继承该句柄会卡在启动解析阶段（复现：父进程主线程 for line in sys.stdin 时下载卡死）
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
@@ -949,7 +949,7 @@ class DownloadTask:
                 pass
 
         def poll_part():
-            while self.state == "downloading":
+            while self.state in ("downloading", "parsing"):
                 if self.tmpdir and os.path.isdir(self.tmpdir):
                     got = 0
                     name = None
@@ -992,6 +992,11 @@ class DownloadTask:
         threading.Thread(target=poll_part, daemon=True).start()
         for line in self.proc.stdout:
             line = line.strip()
+            # 解析中 → 下载中：yt-dlp 出现真实下载行（进度/Destination/Merger）才算开始下载
+            if self.state == "parsing" and ("[download]" in line or "[Merger]" in line or line.startswith("Destination")):
+                self.state = "downloading"
+                if self.ui:
+                    self.pool.on_task_update(self)
             m = re.search(r"\[download\]\s+([\d.]+)%\s+of\s+~?\s?([\d.]+(?:MiB|GiB|KiB))\s+at\s+([\d.]+(?:MiB|GiB|KiB|B)/s)", line)
             if m:
                 # 多流下载（视频+音频分离）时进度行会从 10% 重新走一遍：只涨不跌，避免进度反复/误认为重复下载
@@ -1048,7 +1053,7 @@ class DownloadTask:
         self.pool.on_task_done(self)
 
     def pause(self):
-        if self.state == "downloading" and self.proc:
+        if self.state in ("downloading", "parsing") and self.proc:
             self.state = "paused"
             _kill_proc_tree(self.proc)
             self.pool.on_task_paused(self)
