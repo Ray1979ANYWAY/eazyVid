@@ -940,3 +940,14 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - 根因：useEngine 事件分发 `if (id != null)` 把**任何带 id 的 JSON** 都当命令响应处理；引擎 cmp 事件的 id 是压缩任务 id（非 RPC 请求 id）→ 被误判为响应 → pending 匹配不到 → **return 丢弃**，CompressPanel 监听器永远收不到 cmp 事件。下载事件用 task_id（非 id）不受影响 → 下载进度正常、压缩进度 0%。
 - 修复：响应判定收紧为 `id != null && obj.ev == null`——带 ev 的事件（cmp/dl/ready）一律走 listeners；无 ev 的纯响应才匹配 pending。
 - 验证：tsc 全绿。引擎行为已由直测证实正确，此修复为纯前端，HMR 即时生效。
+
+### 2026-10-10 迭代（右键/拖拽/多实例修复链 + 格式列表排序）
+- 右键菜单"修了没用"的完整根因链：
+  1. **多实例并存**：每次重启/重复启动都新建实例，用户测试的是加载旧代码的实例 → 加 `tauri-plugin-single-instance` 防多开（重复启动只聚焦已有窗口，已实测 count=1）。
+  2. **debug 版控制台黑窗**：`ConsoleWindowClass` 窗口（标题为 exe 路径）每次启动弹出、遮挡主界面 → `main.rs` 无条件 `#![windows_subsystem = "windows"]` 隐藏（debug 也不再弹）。
+  3. **菜单"渲染即被秒杀"**（真根因）：同一次右键的 `contextmenu` 事件在 React root 处理（setCtx → 同步渲染挂载菜单）后继续冒泡到 window，触发挂在 window 的"关闭菜单"监听，把刚渲染的菜单立即关闭——诊断锚序列 `CTX mounted → CTX unmounted` 实锤（800ms 自检都没等到）→ 行右键 `openCtx` 加 `e.stopPropagation()`。
+  4. **拖拽 region 只认 target 自身**：Tauri 的 drag-region 不冒泡子元素 → Sidebar 品牌区 + main 顶部补 `data-tauri-drag-region`（用户点 logo/文字子元素不触发，需点空白）。
+- 右键菜单改 **Portal 渲染到 document.body（z-9999）**，摆脱容器 transform/overflow 干扰。
+- **诊断锚**：前端 `diag.ts` 经 engine_send 发 `cmd=diag` 写探针 `tmp/engine_reqs.txt`——右键 open/set/mounted/800ms 自检 rect/inViewport 全链路落盘，"挂载但看不见"类问题一步定位。
+- **格式列表表头排序**：分辨率/格式/编码/大小四列可点击切换升/降序（▲▼⇅ 指示），大小按字节解析（B/KB/MB/GB）、分辨率按数字排序。
+- mock 诊断任务（DEV_MOCK 两行）已随右键确认移除。
