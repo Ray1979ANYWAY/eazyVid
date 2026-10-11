@@ -5,12 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * - 拖起行浮起跟随鼠标（absolute + shadow + scale），有"拎起"感
  * - 其他行用 transform + transition 平滑挤开/让位（丝滑位移）
  * - 松开落定后重排
+ * - 按下后移动 <5px 视为"点击"（触发 onRowClick，供多选使用），≥5px 才进入拖拽
  */
 export function useDragSort<T extends { id: string }>(
   items: T[],
   rowHeight: number, // 行高 + 行间距（px）
   canDrag: (t: T) => boolean,
   onReorder: (next: T[]) => void,
+  onRowClick?: (id: string, e: MouseEvent) => void, // 新增：按下未拖拽（点击）回调
 ) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragTop, setDragTop] = useState(0); // 拖起行视口 top（fixed 定位）
@@ -22,10 +24,26 @@ export function useDragSort<T extends { id: string }>(
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
+  /* 同步镜像：setState 异步，事件回调里读最新值 */
+  const dragIdRef = useRef<string | null>(null);
+  const insertIdxRef = useRef<number | null>(null);
+  const pressRef = useRef<{ id: string; y: number } | null>(null);
+
+  const startDrag = (id: string) => {
+    dragIdRef.current = id;
+    setDragId(id);
+  };
+  const endDrag = () => {
+    dragIdRef.current = null;
+    setDragId(null);
+    insertIdxRef.current = null;
+    setInsertIdx(null);
+  };
+
   const origIdx = dragId ? items.findIndex((t) => t.id === dragId) : -1;
   const dragging = dragId !== null;
 
-  /* 行上按下：仅可拖行 + 非控件区域启动 */
+  /* 行上按下：仅可拖行 + 非控件区域；记录起点，超移动阈值才算拖拽，否则视为点击 */
   const onRowMouseDown = useCallback(
     (e: React.MouseEvent, id: string) => {
       if (e.button !== 0) return; // 只左键拖拽；右键留给 contextmenu（行右键菜单）
@@ -41,23 +59,35 @@ export function useDragSort<T extends { id: string }>(
       setDragLeft(rect.left);
       setDragWidth(rect.width);
       setDragTop(rect.top);
-      setDragId(id);
-      setInsertIdx(itemsRef.current.findIndex((x) => x.id === id));
+      pressRef.current = { id, y: e.clientY };
     },
     [canDrag],
   );
 
   /* 拖动：fixed 视口坐标直接跟手；槽位以浮行视觉中心判断（看浮行在哪就插到哪） */
   const handleMove = useCallback(
-    (clientY: number) => {
-      if (!dragId || !containerRef.current) return;
+    (e: MouseEvent) => {
+      const clientY = e.clientY;
+      const press = pressRef.current;
+      if (!dragIdRef.current && press) {
+        // 未拖拽：移动超阈值（5px）才正式进入拖拽
+        if (Math.abs(clientY - press.y) > 5) {
+          startDrag(press.id);
+          const idx = itemsRef.current.findIndex((x) => x.id === press.id);
+          insertIdxRef.current = idx;
+          setInsertIdx(idx);
+        } else {
+          return; // 还在点击判定区，未拖拽
+        }
+      }
+      if (!dragIdRef.current || !containerRef.current) return;
       const dragOffsetNow = dragOffset.current;
       setDragTop(clientY - dragOffsetNow);
 
       const cRect = containerRef.current.getBoundingClientRect();
       const list = itemsRef.current;
       const n = list.length;
-      const orig = list.findIndex((t) => t.id === dragId);
+      const orig = list.findIndex((t) => t.id === dragIdRef.current);
       if (orig === -1) return;
       // 浮行视觉中心（视口坐标）= 鼠标 - 按下偏移 + 半行高
       const floatCenter = clientY - dragOffsetNow + rowHeight / 2;
@@ -67,39 +97,46 @@ export function useDragSort<T extends { id: string }>(
       p = Math.max(0, Math.min(p, n - 2));
       const mid = (p + 0.5) * rowHeight;
       const insert = mouseY < mid ? p : p + 1;
+      insertIdxRef.current = insert;
       setInsertIdx(insert);
     },
-    [dragId, rowHeight],
+    [rowHeight],
   );
 
-  /* 松开：提交重排 */
-  const commit = useCallback(() => {
-    if (!dragId) return;
-    const list = itemsRef.current;
-    const orig = list.findIndex((t) => t.id === dragId);
-    if (orig !== -1) {
-      const insert = insertIdx ?? orig;
-      const next = [...list];
-      const [moving] = next.splice(orig, 1);
-      next.splice(insert, 0, moving);
-      onReorder(next);
-    }
-    setDragId(null);
-    setInsertIdx(null);
-  }, [dragId, insertIdx, onReorder]);
+  /* 松开：未拖拽 = 点击回调；已拖拽 = 提交重排 */
+  const handleUp = useCallback(
+    (e: MouseEvent) => {
+      const press = pressRef.current;
+      pressRef.current = null;
+      if (!dragIdRef.current) {
+        if (press) onRowClick?.(press.id, e);
+        return;
+      }
+      const list = itemsRef.current;
+      const orig = list.findIndex((t) => t.id === dragIdRef.current);
+      if (orig !== -1) {
+        const insert = insertIdxRef.current ?? orig;
+        const next = [...list];
+        const [moving] = next.splice(orig, 1);
+        next.splice(insert, 0, moving);
+        onReorder(next);
+      }
+      endDrag();
+    },
+    [onReorder, onRowClick],
+  );
 
-  /* 拖动期间 window 级监听（鼠标移出容器仍有效） */
+  /* 按下期间 window 级监听（鼠标移出容器仍有效；mouseup 后自动解挂） */
   useEffect(() => {
-    if (!dragId) return;
-    const onMove = (e: MouseEvent) => handleMove(e.clientY);
-    const onUp = () => commit();
+    const onMove = (e: MouseEvent) => handleMove(e);
+    const onUp = (e: MouseEvent) => handleUp(e);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [dragId, handleMove, commit]);
+  }, [handleMove, handleUp]);
 
   /* 每行渲染参数：浮起 / 位移 / 插入指示 */
   const rowProps = (t: T, i: number) => {

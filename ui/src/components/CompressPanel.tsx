@@ -51,6 +51,8 @@ function CmpRow({
   onTop,
   onDelete,
   onCtx,
+  onRowClick,
+  selected,
   drag,
 }: {
   t: CmpTask;
@@ -60,6 +62,8 @@ function CmpRow({
   onTop: (t: CmpTask) => void;
   onDelete: (t: CmpTask) => void;
   onCtx: (e: React.MouseEvent, t: CmpTask) => void;
+  onRowClick?: (t: CmpTask, e: React.MouseEvent) => void;
+  selected?: boolean;
   drag?: {
     isDragging: boolean;
     draggingTop: number;
@@ -83,6 +87,7 @@ function CmpRow({
       : t.status === "stopped" || t.status === "skipped" || t.status === "failed"
         ? "bg-amber-row"
         : "bg-white";
+  const bg = selected ? "bg-selected-row" : baseBg;
 
   const statusText: Record<string, string> = {
     running: "压缩中",
@@ -202,8 +207,17 @@ function CmpRow({
   return (
     <div
       onMouseDown={draggable ? drag?.onMouseDown : undefined}
-      className={`relative rounded-lg border border-border-soft mb-1.5 overflow-hidden ${baseBg}
+      onClick={
+        onRowClick
+          ? (e) => {
+              if ((e.target as HTMLElement).closest("button, select, input, a")) return;
+              onRowClick(t, e);
+            }
+          : undefined
+      }
+      className={`relative rounded-lg border border-border-soft mb-1.5 overflow-hidden ${bg}
         ${draggable ? "cursor-grab active:cursor-grabbing select-none" : ""}
+        ${selected ? "ring-1 ring-brand-400/60" : ""}
         transition-transform duration-150 ease-out
         ${drag?.isInsertBefore ? "shadow-[0_-3px_0_0_#005CE6]" : ""}
         ${drag?.isInsertAfter ? "shadow-[0_3px_0_0_#005CE6]" : ""}
@@ -255,6 +269,10 @@ export function CompressPanel({
     const { t } = ctx;
     const out = outPathOf(t, outSame, outDir);
     const items: CtxItem[] = [];
+    /* 右键行在选中集合内且多选 → 批量移出（运行中除外，压缩面板只移出列表） */
+    if (sel.size > 1 && sel.has(t.id)) {
+      items.push({ label: `移出队列（${sel.size} 项）`, onClick: removeSelected });
+    }
     if (t.status === "done") {
       items.push({ label: "打开文件", onClick: () => out && tryOpen(out, "cmp-open") });
     }
@@ -385,10 +403,78 @@ export function CompressPanel({
     (t) => t.status === "done" || t.status === "stopped" || t.status === "skipped" || t.status === "failed",
   );
 
-  /* 拖拽排序（自定义指针实现：拎起浮行 + 其他行平滑挤开），仅作用于排队区 */
-  const dragSort = useDragSort<CmpTask>(queuedTasks, ROW_H, () => true, (next) => {
-    setTasks([...runningTasks, ...next, ...endedTasks]);
-  });
+  /* ============ 多选（Ctrl/Shift 点击；运行中不可选；Delete 或右键批量移出） ============ */
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
+
+  const handleRowClick = (t: CmpTask, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    if (t.status === "running") return; // 运行中不可选（对齐 TK：运行中选不了）
+    if (e.ctrlKey || e.metaKey) {
+      setSel((prev) => {
+        const next = new Set(prev);
+        if (next.has(t.id)) next.delete(t.id);
+        else next.add(t.id);
+        return next;
+      });
+      setAnchor(t.id);
+    } else if (e.shiftKey) {
+      // 范围选择：按展示顺序（压缩中→排队中→结束态）从锚点跨到当前行
+      const order = [...runningTasks, ...queuedTasks, ...endedTasks].map((x) => x.id);
+      const ai = anchor ? order.indexOf(anchor) : -1;
+      const ti = order.indexOf(t.id);
+      if (ai >= 0 && ti >= 0) {
+        const [lo, hi] = ai < ti ? [ai, ti] : [ti, ai];
+        setSel(new Set(order.slice(lo, hi + 1).filter((id) => id !== undefined)));
+      } else {
+        setSel(new Set([t.id]));
+        setAnchor(t.id);
+      }
+    } else {
+      setSel(new Set([t.id]));
+      setAnchor(t.id);
+    }
+  };
+
+  /* 批量移出：压缩面板只移出列表（输出文件保留），运行中除外 */
+  const removeSelected = () => {
+    const ids = [...sel].filter((id) => {
+      const x = tasks.find((t) => t.id === id);
+      return x && x.status !== "running";
+    });
+    if (ids.length === 0) return;
+    setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
+    setSel(new Set());
+  };
+
+  /* Delete / Backspace 键删除选中（焦点不在输入框时） */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+      if (sel.size === 0) return;
+      e.preventDefault();
+      removeSelected();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, tasks]);
+
+  /* 拖拽排序（自定义指针实现：拎起浮行 + 其他行平滑挤开），仅作用于排队区；
+     按下未拖拽（点击）→ 走多选逻辑 */
+  const dragSort = useDragSort<CmpTask>(
+    queuedTasks,
+    ROW_H,
+    () => true,
+    (next) => {
+      setTasks([...runningTasks, ...next, ...endedTasks]);
+    },
+    (id, e) => {
+      const t = queuedTasks.find((x) => x.id === id);
+      if (t) handleRowClick(t, e);
+    },
+  );
 
   /* 收益统计：原大小 × (1 - 压缩比) 求和，仅已完成行 */
   const gain = useMemo(() => {
@@ -557,12 +643,21 @@ export function CompressPanel({
           <div className="text-[12px] font-semibold text-text-main">
             压缩任务 <span className="text-text-sub font-normal">（{tasks.length} 项）</span>
           </div>
-          <div className="text-[11px] text-text-sub">可拖入文件 · 排队中可拖动调整优先级</div>
+          {sel.size > 0 ? (
+            <Button variant="danger" size="sm" onClick={removeSelected}>
+              删除选中（{sel.size}）
+            </Button>
+          ) : (
+            <div className="text-[11px] text-text-sub">可拖入文件 · 排队中可拖动调整优先级</div>
+          )}
         </div>
         <div
           className={`relative flex-1 min-h-0 overflow-y-auto pr-1 rounded-lg transition-colors ${
             fileOver ? "bg-brand-50 ring-2 ring-brand-400/70 ring-inset" : ""
           }`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSel(new Set()); // 点击列表空白取消选中
+          }}
         >
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-text-sub/70 gap-2">
@@ -592,6 +687,7 @@ export function CompressPanel({
                     <CmpRow
                       key={t.id}
                       t={t}
+                      selected={sel.has(t.id)}
                       onCtx={openCtx}
                       onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
                       onStop={stopTask}
@@ -611,6 +707,8 @@ export function CompressPanel({
                 <CmpRow
                   key={t.id}
                   t={t}
+                  selected={sel.has(t.id)}
+                  onRowClick={handleRowClick}
                   onCtx={openCtx}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
                   onStop={stopTask}

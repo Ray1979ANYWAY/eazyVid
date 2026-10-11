@@ -34,6 +34,8 @@
   /* 完成态行底色（薰衣草紫 30%）、终止/失败（琥珀 15%） */
   --color-lavender-row: rgba(123, 44, 191, 0.3);
   --color-amber-row: rgba(199, 138, 42, 0.15);
+  /* 多选选中行：比默认白色略深的灰蓝 */
+  --color-selected-row: #e8ebf0;
 
   /* 字体 */
   --font-display: "Outfit", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
