@@ -399,8 +399,12 @@ export function CompressPanel({
 
   const runningCount = runningTasks.length;
 
+  /* 已点过"开始压缩"（对齐 TK 版 paused 取反）：初始只排队，点开始才启动；之后任务结束自动补位 */
+  const [started, setStarted] = useState(false);
+
   /* 开始压缩：按空闲线程数启动队首任务（每个任务独立 cmp_add，绑 cmpId） */
   const startCompress = () => {
+    setStarted(true);
     const free = Math.max(0, compressWorkers - runningCount);
     const targets = queuedTasks.slice(0, free);
     if (targets.length === 0) return;
@@ -424,9 +428,10 @@ export function CompressPanel({
     });
   };
 
-  /* 自动补位：任一任务结束（完成/失败/跳过/终止）后，只要有空闲线程就自动启动队首排队任务，
-     不需要手动再点"开始压缩"（依赖 tasks：结束态到达触发；进度更新也会跑，free=0 时直接返回） */
+  /* 自动补位：已点过"开始压缩"后，任一任务结束（完成/失败/跳过/终止）有空闲线程就自动启动队首任务。
+     未点过开始（started=false）时不自动启动——添加/拖入任务只排队（对齐 TK 版 paused 语义） */
   useEffect(() => {
+    if (!started) return;
     const running = tasks.filter((t) => t.status === "running").length;
     const queued = tasks.filter((t) => t.status === "queued");
     const free = Math.max(0, compressWorkers - running);
@@ -451,7 +456,7 @@ export function CompressPanel({
         });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, compressWorkers, overwrite, outSame, outDir, cover, coverSec]);
+  }, [started, tasks, compressWorkers, overwrite, outSame, outDir, cover, coverSec]);
 
   /* 终止：发引擎停止（引擎回 stopped 事件驱动状态） */
   const stopTask = (t: CmpTask) => {
