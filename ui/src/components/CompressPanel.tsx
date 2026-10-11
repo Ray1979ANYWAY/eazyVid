@@ -267,12 +267,13 @@ export function CompressPanel({
   const ctxItems = (): CtxItem[] => {
     if (!ctx) return [];
     const { t } = ctx;
+    /* 多选（右键行在选中集合内）：只提供批量移出——不提供打开文件/目录，
+       不同文件所属目录不同，多选打开会弹出一堆资源管理器 */
+    if (sel.size > 1 && sel.has(t.id)) {
+      return [{ label: `移出队列（${sel.size} 项）`, onClick: removeSelected }];
+    }
     const out = outPathOf(t, outSame, outDir);
     const items: CtxItem[] = [];
-    /* 右键行在选中集合内且多选 → 批量移出（运行中除外，压缩面板只移出列表） */
-    if (sel.size > 1 && sel.has(t.id)) {
-      items.push({ label: `移出队列（${sel.size} 项）`, onClick: removeSelected });
-    }
     if (t.status === "done") {
       items.push({ label: "打开文件", onClick: () => out && tryOpen(out, "cmp-open") });
     }
@@ -640,8 +641,13 @@ export function CompressPanel({
       {/* 任务列表 */}
       <div className="flex-1 min-h-0 px-4 pb-3 flex flex-col">
         <div className="flex items-center justify-between mb-2 shrink-0">
-          <div className="text-[12px] font-semibold text-text-main">
-            压缩任务 <span className="text-text-sub font-normal">（{tasks.length} 项）</span>
+          <div className="flex items-center gap-3">
+            <div className="text-[12px] font-semibold text-text-main">
+              压缩任务 <span className="text-text-sub font-normal">（{tasks.length} 项）</span>
+            </div>
+            {sel.size > 0 && (
+              <div className="text-[11px] text-text-sub">可使用 Ctrl 或 Shift 多选移除队列</div>
+            )}
           </div>
           {sel.size > 0 ? (
             <Button variant="danger" size="sm" onClick={removeSelected}>
