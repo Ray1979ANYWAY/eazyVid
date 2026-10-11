@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip, ContextMenu, type CtxItem } from "./ui";
-import { COMPRESS_MODES, type CmpTask } from "../mock";
+import { COMPRESS_MODES, MODE_TINTS, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { diag } from "../diag";
@@ -155,9 +155,9 @@ function CmpRow({
         {/* 模式（运行中变灰；已完成锁定不可改——已压完的模式改也无意义） */}
         <div>
           {t.status === "queued" || t.status === "stopped" || t.status === "skipped" || t.status === "failed" ? (
-            <Select value={t.mode} onChange={(m) => onMode(m)} options={COMPRESS_MODES} className="w-full" />
+            <Select value={t.mode} onChange={(m) => onMode(m)} options={COMPRESS_MODES} tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
           ) : (
-            <Select value={t.mode} onChange={() => {}} options={COMPRESS_MODES} disabled className="w-full" />
+            <Select value={t.mode} onChange={() => {}} options={COMPRESS_MODES} disabled tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
           )}
         </div>
 
@@ -658,7 +658,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
 
         <div className="flex items-center gap-1.5 ml-2 text-[12px] text-text-sub">
           默认模式
-          <Select value={defMode} onChange={setDefMode} options={COMPRESS_MODES} className="w-[130px]" />
+          <Select value={defMode} onChange={setDefMode} options={COMPRESS_MODES} tint={MODE_TINTS[defMode] ?? ""} className="w-[130px]" />
         </div>
 
         <div className="flex-1" />

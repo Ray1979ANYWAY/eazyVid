@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, IconBtn, Icon, Select, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
-import { type DlFormat, type DlTask, COMPRESS_MODES } from "../mock";
+import { type DlFormat, type DlTask, COMPRESS_MODES, MODE_TINTS } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -179,12 +179,13 @@ function DlRow({
             : "—"}
         </div>
 
-        {/* 压缩模式：默认不压缩；选了模式则下载完成后自动入压缩队列（任何状态都可改） */}
+        {/* 压缩模式：默认不压缩；选了模式则下载完成后自动入压缩队列（任何状态都可改）
+            底色紫色色阶：压缩程度越深色越深（画质优先最浅 → AV1 最深，30% 透明度品牌紫） */}
         <div
           className="min-w-0"
           onMouseEnter={(e) => show(e.currentTarget, t.compressMode && t.compressMode !== "none" ? "下载完成后自动压缩" : "下载完成后不压缩，可后续手动添加压缩")}
         >
-          <Select value={t.compressMode ?? "none"} onChange={(m) => onMode?.(t, m)} options={DL_MODES} className="w-full" />
+          <Select value={t.compressMode ?? "none"} onChange={(m) => onMode?.(t, m)} options={DL_MODES} tint={MODE_TINTS[t.compressMode ?? ""] ?? ""} className="w-full" />
         </div>
 
         {/* 操作（内容层在进度条之上，不被遮挡） */}
@@ -478,6 +479,21 @@ export function DownloadPanel({
       if (t) handleRowClick(t, e);
     },
   );
+
+  /* 完成区虚拟滚动：行高 56 + mb-1.5(6) = 62；只渲染可视区行，长列表不卡 */
+  const DL_DONE_H = 62;
+  const listRef = useRef<HTMLDivElement>(null);
+  const [doneTop, setDoneTop] = useState(0);
+  const [doneViewH, setDoneViewH] = useState(400);
+  const onListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    setDoneTop(el.scrollTop);
+    setDoneViewH(el.clientHeight);
+  };
+  const doneStart = Math.max(0, Math.floor(doneTop / DL_DONE_H) - 4);
+  const doneEnd = Math.min(doneTasks.length, Math.ceil((doneTop + doneViewH) / DL_DONE_H) + 4);
+  const visibleDone = doneTasks.map((t, i) => ({ t, i })).slice(doneStart, doneEnd);
 
   /* 探测：引擎直探优先（-J → -F 兜底） */
   const probe = async () => {
@@ -805,6 +821,8 @@ export function DownloadPanel({
           onClick={(e) => {
             if (e.target === e.currentTarget) setSel(new Set()); // 点击列表空白取消选中
           }}
+          ref={listRef}
+          onScroll={onListScroll}
           className={`relative flex-1 min-h-0 overflow-y-auto pr-1 rounded-lg transition-colors ${
             fileOver ? "bg-brand-50 ring-2 ring-brand-400/70 ring-inset" : ""
           }`}
@@ -853,18 +871,21 @@ export function DownloadPanel({
                   );
                 })}
               </div>
-              {/* 完成：固定底部，不参与拖拽；可点选/多选 */}
-              {doneTasks.map((t) => (
-                <DlRow
-                  key={t.id}
-                  t={t}
-                  onCtx={openCtx}
-                  onRowClick={(x, e) => handleRowClick(x, e)}
-                  selected={sel.has(t.id)}
-                  onDelete={remove}
-                  onMode={(x, m) => setMode(x.id, m)}
-                />
-              ))}
+              {/* 完成：固定底部，不参与拖拽；可点选/多选；虚拟滚动只渲染可视区（长列表不卡） */}
+              <div className="relative" style={{ height: doneTasks.length * DL_DONE_H }}>
+                {visibleDone.map(({ t, i }) => (
+                  <div key={t.id} className="absolute left-0 right-0" style={{ top: i * DL_DONE_H }}>
+                    <DlRow
+                      t={t}
+                      onCtx={openCtx}
+                      onRowClick={(x, e) => handleRowClick(x, e)}
+                      selected={sel.has(t.id)}
+                      onDelete={remove}
+                      onMode={(x, m) => setMode(x.id, m)}
+                    />
+                  </div>
+                ))}
+              </div>
             </>
           )}
         </div>

@@ -974,3 +974,7 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - **下载完成自动入压缩队列**：dl 事件 done 且该任务 compressMode≠none 且有输出路径 → onCompress(path, name, mode)（App 接线到 CompressPanel ref 暴露的 addDownloadedTask）。CompressPanel 改 forwardRef + useImperativeHandle 暴露 addDownloadedTask(path,name,mode)：队尾 append（mode 用下载行所选，不走面板默认模式；同路径去重沿用 appendTasks）；若当前运行数 < 线程数则 setStarted(true)——已点过"开始压缩"有空闲线程 → 自动补位 effect 立即启动；未点过开始（started=false）则只排队（对齐 TK：添加只排队、点开始才压）。
 - **双面板 active 隔离**：DownloadPanel/CompressPanel 都加 active prop（App 传 panel===当前），隐藏面板的 Delete/Backspace 监听直接 return——避免在下载面板按 Delete 误删压缩面板残留选中。
 - 验证：tsc 零错误 → 杀 ui+python → npm run build → Start-Process ui.exe → 引擎探针无报错。体验入口：下载格式行点下载 → 下载池行"不压缩"下拉改模式 → 下载完成自动进压缩队列；压缩队列没点过开始则只排队，点"开始压缩"后自动补位；点过开始则下载完立即自动压。
+### 2026-10-11 迭代（压缩模式紫色色阶 + 下载池完成区虚拟滚动）
+- **压缩模式下拉紫色色阶（品牌紫呼应）**：Select 组件新增 tint prop（内联底色覆盖默认白底）。公共色阶表 MODE_TINTS（mock.ts）：画质优先最浅 rgba(215,198,234,.30) → 默认 rgba(189,161,220,.30) → 速度优先 rgba(157,113,205,.30) → AV1 极限压缩最深 rgba(123,44,191,.30)（即图标品牌紫 #7B2CBF @30% 透明度，不再加深）。应用于：下载池每行模式下拉、压缩面板行模式下拉（含 running 禁用态）、压缩面板顶部默认模式下拉。压缩程度由浅到深直观可视化。
+- **下载池完成区虚拟滚动**：已完成任务可能很多（长列表滚动/渲染卡顿）。完成区改为虚拟列表：行高 62（56+mb-1.5），外层列表容器 onScroll 记录 scrollTop + clientHeight，只渲染可视区 ±4 行（absolute 定位 top=i*62 + 总高占位 div），选中/右键/打开文件等交互在虚拟行上照常。下载中区（受线程数限制数量少）与等待/暂停拖拽区保持完整渲染——拖拽逻辑不受影响。
+- 验证：tsc 零错误 → 杀 ui+python → npm run build → ui.exe 启动 → 引擎探针无报错。

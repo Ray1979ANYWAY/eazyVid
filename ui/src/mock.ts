@@ -75,3 +75,13 @@ export const COMPRESS_MODES = [
   { value: "fast", label: "速度优先" },
   { value: "av1", label: "AV1 极限压缩" },
 ];
+
+/* 压缩模式下拉底色：紫色色阶表示压缩程度（品牌紫 #7B2CBF 呼应，统一 30% 透明度）。
+   画质优先（体积收益最小）最浅 → 默认 → 速度优先 → AV1 极限压缩（最狠）最深；
+   最深即图标品牌紫，避免更深。 */
+export const MODE_TINTS: Record<string, string> = {
+  hq: "rgba(215, 198, 234, 0.30)",
+  default: "rgba(189, 161, 220, 0.30)",
+  fast: "rgba(157, 113, 205, 0.30)",
+  av1: "rgba(123, 44, 191, 0.30)",
+};

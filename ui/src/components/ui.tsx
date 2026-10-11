@@ -130,18 +130,22 @@ export function Select({
   options,
   disabled = false,
   className = "",
+  tint = "",
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
   disabled?: boolean;
   className?: string;
+  /* 底色（内联样式，覆盖默认白底）：压缩模式下拉用紫色色阶表示压缩程度 */
+  tint?: string;
 }) {
   return (
     <select
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
+      style={tint ? { background: tint } : undefined}
       className={`h-7 rounded-md border border-border-soft bg-white px-2 text-[12px] text-text-main
         focus:outline-2 focus:outline-brand-500 disabled:opacity-40 cursor-pointer ${className}`}
     >
