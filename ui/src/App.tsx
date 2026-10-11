@@ -224,9 +224,10 @@ function App() {
     };
   }, [engReady, engCall]);
 
-  /* 真实任务完成跟踪：只有在本次运行中确实有任务自然完成（done）时才触发完成通知/关机，
+  /* 真实任务完成跟踪：分别跟踪下载与压缩队列是否有真实任务自然完成（done）。
      用户手动清空/删除未完成任务不视为"任务完成" */
-  const hasCompletedTaskRef = useRef(false);
+  const hasCompletedDlRef = useRef(false);
+  const hasCompletedCmpRef = useRef(false);
 
   /* 更新进度与任务完成事件（只注册一次） */
   useEffect(() => {
@@ -235,8 +236,9 @@ function App() {
         const p = (ev as { percent?: number }).percent;
         if (typeof p === "number") setFfmpegPct(p);
       }
-      if ((ev.ev === "dl" || ev.ev === "cmp") && (ev as { state?: string }).state === "done") {
-        hasCompletedTaskRef.current = true;
+      if ((ev as { state?: string }).state === "done") {
+        if (ev.ev === "dl") hasCompletedDlRef.current = true;
+        if (ev.ev === "cmp") hasCompletedCmpRef.current = true;
       }
     });
   }, [engOn]);
@@ -291,15 +293,17 @@ function App() {
       return;
     }
     // 只有在队列中确实有任务真实完成（而非用户手动清除/删除任务）时才触发关机
-    if (!hasCompletedTaskRef.current) {
+    if (!hasCompletedDlRef.current && !hasCompletedCmpRef.current) {
       hadTasksRef.current = false;
       return;
     }
     // 防抖 1.5 秒：给任务转换/完成事件留足缓冲，确认确实无任何进行中或排队任务
     const timer = setTimeout(() => {
-      if (hadTasksRef.current && totalActive === 0 && hasCompletedTaskRef.current && !shutdownPending) {
+      const hasAnyDone = hasCompletedDlRef.current || hasCompletedCmpRef.current;
+      if (hadTasksRef.current && totalActive === 0 && hasAnyDone && !shutdownPending) {
         hadTasksRef.current = false;
-        hasCompletedTaskRef.current = false;
+        hasCompletedDlRef.current = false;
+        hasCompletedCmpRef.current = false;
         setShutdownCountdown(60);
         setShutdownPending(true);
         void engCall("system_shutdown", { delay: 60 });
@@ -322,35 +326,48 @@ function App() {
     return () => clearInterval(timer);
   }, [shutdownPending]);
 
-  /* 全局任务完成提示（未开启自动关机时，在应用右下角浮动 Toast + 触发系统通知） */
-  const [completeToast, setCompleteToast] = useState<{ open: boolean; gain: string } | null>(null);
+  /* 任务完成提示（未开启自动关机时，在应用右下角浮动 Toast + 触发系统通知） */
+  const [completeToast, setCompleteToast] = useState<{
+    open: boolean;
+    type: "dl" | "cmp";
+    title: string;
+    body: string;
+  } | null>(null);
+
+  const dlActive = dlAct.running + dlAct.queued;
+  const cmpActive = cmpAct.running + cmpAct.queued;
+  const hadDlRef = useRef(false);
+  const hadCmpRef = useRef(false);
 
   useEffect(() => {
-    if (shutdown || !hadTasksRef.current || totalActive > 0) return;
-    // 只有在队列中确实有任务真实完成（而非用户手动清空/删除未完成任务）时才弹出完成通知
-    if (!hasCompletedTaskRef.current) {
-      hadTasksRef.current = false;
+    if (dlActive > 0) hadDlRef.current = true;
+  }, [dlActive]);
+
+  useEffect(() => {
+    if (cmpActive > 0) hadCmpRef.current = true;
+  }, [cmpActive]);
+
+  // 下载队列独立完成检测
+  useEffect(() => {
+    if (shutdown || !hadDlRef.current || dlActive > 0) return;
+    if (!hasCompletedDlRef.current) {
+      hadDlRef.current = false;
       return;
     }
     const timer = setTimeout(() => {
-      if (hadTasksRef.current && totalActive === 0 && hasCompletedTaskRef.current && !shutdown) {
-        hadTasksRef.current = false;
-        hasCompletedTaskRef.current = false;
-        const gainStr = (cmpGain / 1024 ** 3).toFixed(2);
-        setCompleteToast({ open: true, gain: gainStr });
+      if (hadDlRef.current && dlActive === 0 && hasCompletedDlRef.current && !shutdown) {
+        hadDlRef.current = false;
+        hasCompletedDlRef.current = false;
+        const title = t("toast.dlTitle");
+        const body = t("toast.dlBody");
+        setCompleteToast({ open: true, type: "dl", title, body });
         try {
           if (typeof window !== "undefined" && "Notification" in window) {
             if (Notification.permission === "granted") {
-              new Notification(t("toast.title"), {
-                body: t("toast.body", { gain: gainStr }),
-              });
+              new Notification(title, { body });
             } else if (Notification.permission !== "denied") {
               void Notification.requestPermission().then((p) => {
-                if (p === "granted") {
-                  new Notification(t("toast.title"), {
-                    body: t("toast.body", { gain: gainStr }),
-                  });
-                }
+                if (p === "granted") new Notification(title, { body });
               });
             }
           }
@@ -360,7 +377,40 @@ function App() {
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [shutdown, totalActive, cmpGain, t]);
+  }, [shutdown, dlActive, t]);
+
+  // 压缩队列独立完成检测
+  useEffect(() => {
+    if (shutdown || !hadCmpRef.current || cmpActive > 0) return;
+    if (!hasCompletedCmpRef.current) {
+      hadCmpRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (hadCmpRef.current && cmpActive === 0 && hasCompletedCmpRef.current && !shutdown) {
+        hadCmpRef.current = false;
+        hasCompletedCmpRef.current = false;
+        const gainStr = (cmpGain / 1024 ** 3).toFixed(2);
+        const title = t("toast.cmpTitle");
+        const body = t("toast.cmpBody", { gain: gainStr });
+        setCompleteToast({ open: true, type: "cmp", title, body });
+        try {
+          if (typeof window !== "undefined" && "Notification" in window) {
+            if (Notification.permission === "granted") {
+              new Notification(title, { body });
+            } else if (Notification.permission !== "denied") {
+              void Notification.requestPermission().then((p) => {
+                if (p === "granted") new Notification(title, { body });
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [shutdown, cmpActive, cmpGain, t]);
 
   return (
     <I18nProvider setting={settings.lang}>
@@ -590,21 +640,32 @@ function App() {
           </Button>
         </div>
       </Dialog>
-      {/* 全队列任务完成应用内浮动 Toast（未开自动关机时优雅呈现） */}
+      {/* 队列任务完成应用内浮动 Toast（未开自动关机时优雅呈现） */}
       {completeToast?.open && (
         <div className="fixed bottom-16 right-5 z-50 w-80 bg-white/95 backdrop-blur-md border border-border-soft rounded-2xl shadow-xl p-3.5 flex items-start gap-3 transition-all animate-in fade-in slide-in-from-bottom-2">
-          <div className="w-8 h-8 rounded-xl bg-[#14185e] flex items-center justify-center shrink-0 shadow-xs">
-            <svg width="18" height="18" viewBox="0 0 40 40" fill="none">
-              <path d="M12 9 L24 20 L12 31 Z" fill="#60A5FA" />
-              <path d="M22 14 L28 20 L22 26" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
+            completeToast.type === "cmp" ? "bg-amber-500/15 text-amber-600" : "bg-[#14185e] text-blue-400"
+          }`}>
+            {completeToast.type === "cmp" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 14 10 14 10 20" />
+                <polyline points="20 10 14 10 14 4" />
+                <line x1="14" y1="10" x2="21" y2="3" />
+                <line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 40 40" fill="none">
+                <path d="M12 9 L24 20 L12 31 Z" fill="#60A5FA" />
+                <path d="M22 14 L28 20 L22 26" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-bold text-text-main">
-              {t("toast.title")}
+              {completeToast.title}
             </div>
             <p className="mt-1 text-[12px] text-text-sub leading-snug">
-              {t("toast.body", { gain: completeToast.gain })}
+              {completeToast.body}
             </p>
             <div className="mt-2.5 flex justify-end">
               <Button size="sm" onClick={() => setCompleteToast(null)}>
