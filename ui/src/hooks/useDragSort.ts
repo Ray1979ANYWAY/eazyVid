@@ -92,12 +92,32 @@ export function useDragSort<T extends { id: string }>(
       // 浮行视觉中心（视口坐标）= 鼠标 - 按下偏移 + 半行高
       const floatCenter = clientY - dragOffsetNow + rowHeight / 2;
       const mouseY = floatCenter - cRect.top;
-      // 物理槽位（不含拖起行：有效行占 0..n-2 槽）
-      let p = Math.floor(mouseY / rowHeight);
-      p = Math.max(0, Math.min(p, n - 2));
-      // 换槽阈值：浮行中心越过槽位的 75% 才挤开下一行（用户要求更晚换槽，减少误触感）
-      const mid = (p + 0.75) * rowHeight;
-      const insert = mouseY < mid ? p : p + 1;
+
+      /* 插入位置按"视觉行实际位置"判断（不用均匀网格）：
+         拖拽中其他行已补位/让位（delta 位移），均匀网格会与视觉错位——拖得越远偏差越明显。
+         用与 rowProps 一致的 j 逻辑算每个有效行的视觉 top，找浮行中心落在哪个行内，
+         超过该行 75% 高度插它后面，否则插它前面。 */
+      const curIns = insertIdxRef.current ?? orig;
+      const visTops: number[] = [];
+      for (let i = 0; i < n; i++) {
+        if (i === orig) continue;
+        let j = i - (i > orig ? 1 : 0);
+        if (j >= curIns) j += 1;
+        visTops.push(j * rowHeight);
+      }
+      let insert = curIns;
+      for (let k = 0; k < visTops.length; k++) {
+        const top = visTops[k];
+        const nextTop = k < visTops.length - 1 ? visTops[k + 1] : Infinity;
+        if (mouseY >= top && mouseY < nextTop) {
+          insert = mouseY - top > 0.75 * rowHeight ? k + 1 : k;
+          break;
+        }
+      }
+      // 浮行在列表上边界之上 / 下边界之下
+      if (mouseY < (visTops[0] ?? 0)) insert = 0;
+      else if (visTops.length > 0 && mouseY >= visTops[visTops.length - 1] + rowHeight) insert = n - 1;
+      insert = Math.max(0, Math.min(insert, n - 1));
       insertIdxRef.current = insert;
       setInsertIdx(insert);
     },
