@@ -24,3 +24,11 @@ eazyvid.lock
 adobe_collabsync_restore.reg
 
 tmp/
+
+# 瀹屾垚鐨勫ぇ浜屽埗锛堜笉鎺ㄩ€侊紝README 缁欏畼鏂逛笅杞介摼鎺ワ級
+ffplay.exe
+# yt-dlp 浜屽埗锛堜笉鎺ㄩ€侊級
+yt-dlp.exe
+# TK 鐗堟嫋鎷界暀瀛橈紙Tauri 鐗堜笉闇€瑕侊級
+vendor/
+
