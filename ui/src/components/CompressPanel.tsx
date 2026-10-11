@@ -756,7 +756,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
     <div className="flex flex-col h-full min-h-0">
       {/* 工具条 */}
       <div className="shrink-0 p-4 pb-3 flex items-center gap-2">
-        <Button variant="soft" onClick={pickVideos} disabled={busy}>
+        <Button onClick={pickVideos} disabled={busy}>
           <Icon d="M12 5v14M5 12h14" size={14} />
           {t("cmp.addVideos")}
         </Button>
@@ -811,9 +811,151 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
           }}
         >
           {tasks.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-text-sub/70 gap-2">
-              <Icon d="M12 5v14M5 12h14" size={36} strokeWidth={1.5} />
-              <div className="text-[14px]">{t("cmp.emptyTip")}</div>
+            <div className="h-full flex flex-col p-2 select-none">
+              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 flex flex-col items-center justify-center p-6 text-center transition-all">
+                {/* 核心插画：文件减重瘦身艺术隐喻 (850MB ➔ 210MB，一秒辨识为视频压缩) */}
+                <div className="relative w-48 h-36 mb-4 flex items-center justify-center">
+                  {/* 柔和紫色渐变底环 */}
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-xl" />
+
+                  {/* 左侧：原始大视频文件 */}
+                  <div className="absolute -left-2 w-24 h-28 bg-white rounded-xl border border-border-soft shadow-md p-2 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="w-2 h-2 rounded-full bg-rose-400" />
+                      <span className="text-[10px] font-mono text-text-sub">MP4</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-500 flex items-center justify-center mb-1">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+                          <line x1="7" y1="2" x2="7" y2="22" />
+                          <line x1="17" y1="2" x2="17" y2="22" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-bold text-text-main">850 MB</span>
+                    </div>
+                    <span className="text-[9px] text-text-sub">{t("cmp.origSizeLabel")}</span>
+                  </div>
+
+                  {/* 中间：高能压缩挤压齿轮与减重箭头 */}
+                  <div className="relative z-10 flex flex-col items-center">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-purple-500/30">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 3v14m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                      </svg>
+                    </div>
+                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-bold tracking-tight">
+                      {t("cmp.slimmingBadge")}
+                    </span>
+                  </div>
+
+                  {/* 右侧：压缩后精炼小文件 */}
+                  <div className="absolute -right-2 w-24 h-28 bg-white rounded-xl border border-purple-200 shadow-md p-2 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-[10px] font-mono text-purple-600 font-bold">OPTIMIZED</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center mb-1">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <polyline points="22 4 12 14.01 9 11.01" />
+                        </svg>
+                      </div>
+                      <span className="text-[12px] font-bold text-emerald-700">210 MB</span>
+                    </div>
+                    <span className="text-[9px] text-text-sub">{t("cmp.optSizeLabel")}</span>
+                  </div>
+                </div>
+
+                {/* 标题与副标题 */}
+                <h3 className="text-[17px] font-bold text-text-main tracking-tight">
+                  {t("cmp.emptyTitle")}
+                </h3>
+                <p className="mt-1.5 text-[13.5px] text-text-sub max-w-md leading-relaxed">
+                  {t("cmp.emptyDesc")}
+                </p>
+
+                {/* 快速操作大按钮组 */}
+                <div className="mt-5 flex items-center gap-3">
+                  <Button onClick={pickVideos} disabled={busy} className="px-5 h-10 text-[13.5px]">
+                    <Icon d="M12 5v14M5 12h14" size={14} />
+                    <span>{t("cmp.btnBrowseFiles")}</span>
+                  </Button>
+                  <Button variant="soft" onClick={pickFolder} disabled={busy} className="px-5 h-10 text-[13.5px]">
+                    <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={14} />
+                    <span>{busy ? t("cmp.scanning") : t("cmp.btnBrowseFolder")}</span>
+                  </Button>
+                </div>
+
+                {/* 底部常用模式速选卡片 */}
+                <div className="mt-7 pt-5 border-t border-border-soft w-full max-w-xl">
+                  <div className="text-[12px] text-text-sub/70 font-medium mb-2.5">
+                    {t("cmp.presetQuickSelect")}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-left">
+                    <div
+                      onClick={() => setDefMode("default")}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                        defMode === "default"
+                          ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300/40"
+                          : "border-emerald-200/80 bg-emerald-50/50 hover:bg-emerald-100/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12.5px] font-bold text-emerald-900">{t("mode.default")}</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      </div>
+                      <p className="text-[11px] text-emerald-700/80 mt-0.5 leading-tight">{t("cmp.presetDescDefault")}</p>
+                    </div>
+
+                    <div
+                      onClick={() => setDefMode("hq")}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                        defMode === "hq"
+                          ? "border-sky-400 bg-sky-50 ring-2 ring-sky-300/40"
+                          : "border-sky-200/80 bg-sky-50/50 hover:bg-sky-100/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12.5px] font-bold text-sky-900">{t("mode.hq")}</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                      </div>
+                      <p className="text-[11px] text-sky-700/80 mt-0.5 leading-tight">{t("cmp.presetDescHq")}</p>
+                    </div>
+
+                    <div
+                      onClick={() => setDefMode("fast")}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                        defMode === "fast"
+                          ? "border-amber-400 bg-amber-50 ring-2 ring-amber-300/40"
+                          : "border-amber-200/80 bg-amber-50/50 hover:bg-amber-100/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12.5px] font-bold text-amber-900">{t("mode.fast")}</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      </div>
+                      <p className="text-[11px] text-amber-700/80 mt-0.5 leading-tight">{t("cmp.presetDescFast")}</p>
+                    </div>
+
+                    <div
+                      onClick={() => setDefMode("av1")}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                        defMode === "av1"
+                          ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300/40"
+                          : "border-indigo-200/80 bg-indigo-50/50 hover:bg-indigo-100/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12.5px] font-bold text-indigo-900">{t("mode.av1")}</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                      </div>
+                      <p className="text-[11px] text-indigo-700/80 mt-0.5 leading-tight">{t("cmp.presetDescAv1")}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <>
