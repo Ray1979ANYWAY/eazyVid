@@ -224,12 +224,19 @@ function App() {
     };
   }, [engReady, engCall]);
 
-  /* 更新进度事件（只注册一次） */
+  /* 真实任务完成跟踪：只有在本次运行中确实有任务自然完成（done）时才触发完成通知/关机，
+     用户手动清空/删除未完成任务不视为"任务完成" */
+  const hasCompletedTaskRef = useRef(false);
+
+  /* 更新进度与任务完成事件（只注册一次） */
   useEffect(() => {
     return engOn((ev) => {
       if (ev.ev === "ffmpeg_progress") {
         const p = (ev as { percent?: number }).percent;
         if (typeof p === "number") setFfmpegPct(p);
+      }
+      if ((ev.ev === "dl" || ev.ev === "cmp") && (ev as { state?: string }).state === "done") {
+        hasCompletedTaskRef.current = true;
       }
     });
   }, [engOn]);
@@ -283,10 +290,16 @@ function App() {
     if (!shutdown || !hadTasksRef.current || totalActive > 0 || shutdownPending) {
       return;
     }
+    // 只有在队列中确实有任务真实完成（而非用户手动清除/删除任务）时才触发关机
+    if (!hasCompletedTaskRef.current) {
+      hadTasksRef.current = false;
+      return;
+    }
     // 防抖 1.5 秒：给任务转换/完成事件留足缓冲，确认确实无任何进行中或排队任务
     const timer = setTimeout(() => {
-      if (hadTasksRef.current && totalActive === 0 && !shutdownPending) {
+      if (hadTasksRef.current && totalActive === 0 && hasCompletedTaskRef.current && !shutdownPending) {
         hadTasksRef.current = false;
+        hasCompletedTaskRef.current = false;
         setShutdownCountdown(60);
         setShutdownPending(true);
         void engCall("system_shutdown", { delay: 60 });
@@ -314,9 +327,15 @@ function App() {
 
   useEffect(() => {
     if (shutdown || !hadTasksRef.current || totalActive > 0) return;
+    // 只有在队列中确实有任务真实完成（而非用户手动清空/删除未完成任务）时才弹出完成通知
+    if (!hasCompletedTaskRef.current) {
+      hadTasksRef.current = false;
+      return;
+    }
     const timer = setTimeout(() => {
-      if (hadTasksRef.current && totalActive === 0 && !shutdown) {
+      if (hadTasksRef.current && totalActive === 0 && hasCompletedTaskRef.current && !shutdown) {
         hadTasksRef.current = false;
+        hasCompletedTaskRef.current = false;
         const gainStr = (cmpGain / 1024 ** 3).toFixed(2);
         setCompleteToast({ open: true, gain: gainStr });
         try {
