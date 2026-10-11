@@ -424,6 +424,35 @@ export function CompressPanel({
     });
   };
 
+  /* 自动补位：任一任务结束（完成/失败/跳过/终止）后，只要有空闲线程就自动启动队首排队任务，
+     不需要手动再点"开始压缩"（依赖 tasks：结束态到达触发；进度更新也会跑，free=0 时直接返回） */
+  useEffect(() => {
+    const running = tasks.filter((t) => t.status === "running").length;
+    const queued = tasks.filter((t) => t.status === "queued");
+    const free = Math.max(0, compressWorkers - running);
+    if (queued.length === 0 || free === 0) return;
+    const targets = queued.slice(0, free);
+    const ts = Date.now();
+    targets.forEach((t, i) => {
+      const doOverwrite = overwrite && outSame;
+      engine
+        .call("cmp_add", {
+          path: t.path,
+          mode: t.mode,
+          out_dir: outSame ? null : outDir || null,
+          cover_sec: doOverwrite && cover ? coverSec : null,
+          overwrite: doOverwrite,
+        })
+        .then((r) => {
+          const cid = (r as { cmp_id?: number }).cmp_id;
+          setTasks((prev) =>
+            prev.map((x) => (x.id === t.id ? { ...x, cmpId: cid, status: "running", pct: 0, startTs: ts + i } : x)),
+          );
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, compressWorkers, overwrite, outSame, outDir, cover, coverSec]);
+
   /* 终止：发引擎停止（引擎回 stopped 事件驱动状态） */
   const stopTask = (t: CmpTask) => {
     if (t.cmpId != null) {
