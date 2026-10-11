@@ -765,7 +765,10 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
           {busy ? t("cmp.scanning") : t("cmp.addFolder")}
         </Button>
 
-        <div className="flex items-center gap-1.5 ml-2 text-[14px] text-text-sub">
+        <div
+          className="flex items-center gap-1.5 ml-2 text-[14px] text-text-sub cursor-default"
+          onMouseEnter={(e) => show(e.currentTarget, t("cmp.modeTip"))}
+        >
           {t("cmp.modeLabel")}
           <Select value={defMode} onChange={setDefMode} options={compressModes} tint={MODE_TINTS[defMode] ?? ""} className="w-[145px]" />
         </div>
