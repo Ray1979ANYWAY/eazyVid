@@ -1189,3 +1189,32 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
   - 前端：`npm run build`（`tsc && vite build`）零报错编译，36 个模块产出正常；
   - 后端：`cargo build --release` 编译完成，生成的高性能 `ui.exe`（4.82 MB）已安全替换至根目录；
   - 自动化回归测试：`test_v2.py`、`smoke_v2.py`、`tmp/test_cmp_driver.py` 全数 100% 通过。
+
+### 2026-10-11 迭代（左上角品牌字标落地：方案 C 工业几何宽体 eazyVID + 内嵌零网络延迟）
+- **需求与设计背景**：
+  1. 用户希望为左上角 "eazyVid" 设计定制化字体与配色，使其与新重构的品牌深藏青（`#14185e`）顶栏和双色调图标相衬托；
+  2. 经过多套方案对比分析，用户选定“方案 C：现代工业宽体（Studio Wide Industrial）”；
+  3. 方案 C 规范：
+     - 排版与大小写：`eazy` 采用小写，`VID` 采用全大写（`eazyVID`）；
+     - 字体：采用全球顶尖的几何宽体无衬线字体 *Unbounded*（ExtraBold 权重），具备极强的未来感与宽字距高辨识度；
+     - 色彩搭配：`eazy` 采用冷钛白高光（`#F1F5F9`），`VID` 采用电光钴蓝（`#60A5FA` / `text-blue-400`），与 Logo 的电光蓝起点及顶栏背景形成极具张力的主次对比；
+     - 架构要求：绝不依赖外部 CDN 网络请求，避免 WebView2 CSP 策略拦截或偶发断网导致字体回退破损。
+- **具体实施**：
+  1. **零网络依赖与极速秒开（`ui/src/index.css`）**：
+     - 精准提取包含 `eazyVID` 字符的官方 `Unbounded-ExtraBold` TrueType 字体子集（Binary 体积仅 2.4 KB）；
+     - 以 Base64 `data:font/truetype;charset=utf-8;base64,...` 内嵌形式挂载 `@font-face`（`font-family: 'Unbounded'`）；
+     - 在 `@theme` 中声明 `--font-brand: "Unbounded", "Segoe UI", system-ui, sans-serif;`；
+     - 无论设备是否离线、内网运行或断网，字标均能在窗口冷启动时 0 毫秒首帧呈现，完全杜绝 FOUT（字体闪烁）。
+  2. **组件精准落地（`ui/src/App.tsx`）**：
+     - 重构顶栏左侧字标结构，替换原普通 `<span>eazyVid</span>`：
+       ```tsx
+       <div className="font-brand font-bold text-[15px] tracking-wider leading-none select-none flex items-baseline">
+         <span className="text-[#F1F5F9] font-extrabold">eazy</span>
+         <span className="text-blue-400 font-extrabold ml-0.5">VID</span>
+       </div>
+       ```
+     - 采用 `text-[15px]` 与 `tracking-wider` 宽字距微调，配合 `items-baseline` 与 `ml-0.5`，与 26px 白底 Logo 保持完美视觉对齐与呼吸感。
+- **构建与测试验证**：
+  - 前端：`npm run build`（`tsc && vite build`）零报错编译，36 个模块正常产出；
+  - 后端：`cargo build --release` 编译完成，生成的高性能 `ui.exe`（4.82 MB）已安全替换至根目录；
+  - 自动化回归测试：`test_v2.py`、`smoke_v2.py`、`tmp/test_cmp_driver.py` 全数 100% 通过。

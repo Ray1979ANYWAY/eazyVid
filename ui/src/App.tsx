@@ -327,7 +327,10 @@ function App() {
           <div className="flex items-center gap-2.5 shrink-0" data-tauri-drag-region>
             <div className="pointer-events-none flex items-center gap-2.5">
               <Logo size={26} />
-              <span className="font-bold text-[17px] tracking-tight text-white font-display">eazyVid</span>
+              <div className="font-brand font-bold text-[15px] tracking-wider leading-none select-none flex items-baseline">
+                <span className="text-[#F1F5F9] font-extrabold">eazy</span>
+                <span className="text-blue-400 font-extrabold ml-0.5">VID</span>
+              </div>
             </div>
           </div>
 
