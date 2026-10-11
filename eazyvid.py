@@ -3171,7 +3171,7 @@ class App:
             # 压缩版面：实时刷新"压缩收益"统计（每 100ms tick 顺带，始终显示）
             if self._page == "cp" and getattr(self, "_free_lbl", None) is not None:
                 _n, _tot = self._calc_free_space()
-                _txt = f"当前任务列表，已完成压缩收益{_fmt_size(_tot) or '0 B'}"
+                _txt = f"当前任务列表已完成压缩收益{_fmt_size(_tot) or '0 B'}"
                 if _txt != self._free_txt:
                     self._free_txt = _txt
                     try:

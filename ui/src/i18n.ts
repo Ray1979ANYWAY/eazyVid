@@ -30,11 +30,11 @@ const DICT = {
 
   // Global Footer
   "footer.gain": {
-    "zh-CN": "当前任务列表，已完成压缩收益 {gain} GB",
+    "zh-CN": "当前任务列表已完成压缩收益 {gain} GB",
     en: "Current queue: {gain} GB saved via compression",
   },
   "footer.dlCount": {
-    "zh-CN": "当前任务列表，已完成下载 {count} 项",
+    "zh-CN": "当前任务列表已完成下载 {count} 项",
     en: "Current queue: {count} downloads finished",
   },
   "footer.shutdown": {

@@ -36,3 +36,4 @@ vendor/
 # 本地构建输出
 ui.exe
 *.dll
+*.old
