@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar, type Panel } from "./components/Sidebar";
 import { DownloadPanel } from "./components/DownloadPanel";
-import { CompressPanel } from "./components/CompressPanel";
+import { CompressPanel, type CompressPanelHandle } from "./components/CompressPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { WindowControls } from "./components/WindowControls";
 import { TipProvider, Dialog, Button } from "./components/ui";
@@ -69,6 +69,10 @@ function App() {
   /* 进行中任务总数：用 ref 让 quit-request 回调始终读最新值（避免因 effect 重跑残留旧监听） */
   const runningRef = useRef(0);
   runningRef.current = dlAct.running + cmpAct.running;
+
+  /* 压缩面板句柄：下载完成（选了压缩模式）→ 自动加入压缩队列队尾；
+     若压缩面板已点过"开始压缩"且有空闲线程 → 立即自动开始压缩 */
+  const cmpRef = useRef<CompressPanelHandle>(null);
 
   /* 托盘"退出"：先检查进行中任务 → 有则弹确认（未完成任务文件将被删除），无则直接退出。
      监听只注册一次（空依赖），回调读 runningRef 最新值——防止旧闭包误判为 0 直接退出。 */
@@ -205,10 +209,13 @@ function App() {
               dlWorkers={settings.dlWorkers}
               dlDir={settings.dlDir}
               onActivityChange={(b, f, running) => setDlAct({ busy: b, fail: f, running })}
+              onCompress={(path, name, mode) => cmpRef.current?.addDownloadedTask(path, name, mode)}
+              active={panel === "download"}
             />
           </div>
           <div className={panel === "compress" ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
             <CompressPanel
+              ref={cmpRef}
               compressWorkers={settings.compressWorkers}
               outSame={settings.outSame}
               outDir={settings.outDir}
@@ -216,6 +223,7 @@ function App() {
               cover={settings.cover}
               coverSec={settings.coverSec}
               onActivityChange={(b, f, running) => setCmpAct({ busy: b, fail: f, running })}
+              active={panel === "compress"}
             />
           </div>
         </main>

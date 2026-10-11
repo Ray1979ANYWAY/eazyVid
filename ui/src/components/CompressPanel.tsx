@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip, ContextMenu, type CtxItem } from "./ui";
 import { COMPRESS_MODES, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
@@ -230,15 +230,12 @@ function CmpRow({
 }
 
 /* ============ 压缩面板 ============ */
-export function CompressPanel({
-  compressWorkers = 3,
-  outSame = true,
-  outDir = "",
-  overwrite = false,
-  cover = false,
-  coverSec = 5,
-  onActivityChange,
-}: {
+/* 对 App 暴露：下载完成自动入队（队尾排队；若已点过"开始压缩"且有空闲线程 → 立即自动开始压缩） */
+export type CompressPanelHandle = {
+  addDownloadedTask: (path: string, name: string, mode: string) => void;
+};
+
+export const CompressPanel = forwardRef<CompressPanelHandle, {
   compressWorkers?: number;
   outSame?: boolean;
   outDir?: string;
@@ -246,7 +243,21 @@ export function CompressPanel({
   cover?: boolean;
   coverSec?: number;
   onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
-}) {
+  /* 当前是否为可见面板：隐藏面板不响应 Delete/Backspace（多选删除只作用于当前面板） */
+  active?: boolean;
+}>(function CompressPanel(
+  {
+    compressWorkers = 3,
+    outSame = true,
+    outDir = "",
+    overwrite = false,
+    cover = false,
+    coverSec = 5,
+    onActivityChange,
+    active = true,
+  },
+  ref,
+) {
   const [tasks, setTasks] = useState<CmpTask[]>([]);
   const [defMode, setDefMode] = useState("default");
   const [shutdown, setShutdown] = useState(false);
@@ -323,7 +334,7 @@ export function CompressPanel({
     setTasks((prev) => prev.filter((x) => x.id !== id));
   };
 
-  const appendTasks = (items: { path: string; name: string }[]) =>
+  const appendTasks = (items: { path: string; name: string; mode?: string }[]) =>
     setTasks((prev) => {
       /* 同一路径不重复入列（拖拽/多选可能重复触发） */
       const existing = new Set(prev.map((t) => t.path));
@@ -336,10 +347,25 @@ export function CompressPanel({
           path: it.path,
           status: "queued" as const,
           orig: 0,
-          mode: defMode,
+          mode: it.mode ?? defMode,
         })),
       ];
     });
+
+  /* 下载完成自动入队（App 经 ref 调用）：
+     队尾排队；若已点过"开始压缩"（started）→ 自动补位 effect 会立即启动（有空闲线程时） */
+  useImperativeHandle(ref, () => ({
+    addDownloadedTask: (path, name, mode) => {
+      diag(`DL-COMPLETE addDownloadedTask mode=${mode} path=${path}`);
+      appendTasks([{ path, name, mode }]);
+      /* 队列里没有运行中任务（或还有空闲线程）且已开过闸 → 让自动补位立即生效；
+         未点过开始（started=false）则只排队（对齐 TK：添加文件只排队、点开始才压） */
+      if (tasks.filter((t) => t.status === "running").length < compressWorkers) {
+        setStarted(true);
+      }
+    },
+  }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   /* 添加视频（系统文件对话框） */
   const pickVideos = async () => {
@@ -454,8 +480,9 @@ export function CompressPanel({
     setSel(new Set());
   };
 
-  /* Delete / Backspace 键删除选中（焦点不在输入框时） */
+  /* Delete / Backspace 键删除选中（仅当前可见面板；焦点不在输入框时） */
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const ae = document.activeElement;
@@ -467,7 +494,7 @@ export function CompressPanel({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, tasks]);
+  }, [active, sel, tasks]);
 
   /* 拖拽排序（自定义指针实现：拎起浮行 + 其他行平滑挤开），仅作用于排队区；
      按下未拖拽（点击）→ 走多选逻辑 */
@@ -756,4 +783,4 @@ export function CompressPanel({
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
     </div>
   );
-}
+});

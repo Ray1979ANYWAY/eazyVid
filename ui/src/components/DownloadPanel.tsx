@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, IconBtn, Icon, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
-import { type DlFormat, type DlTask } from "../mock";
+import { Button, IconBtn, Icon, Select, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
+import { type DlFormat, type DlTask, COMPRESS_MODES } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { diag } from "../diag";
+
+/* 下载行压缩模式选项：默认"不压缩"，选了模式则下载完成自动入压缩队列 */
+const DL_MODES = [{ value: "none", label: "不压缩" }, ...COMPRESS_MODES];
 
 /** 打开文件/目录：调用前后 + 错误全部落盘探针（定位"点了没动作"） */
 const tryOpen = (p: string, kind: string) => {
@@ -86,6 +89,9 @@ function DlRow({
   onRestart,
   onDelete,
   onCtx,
+  onRowClick,
+  onMode,
+  selected,
 }: {
   t: DlTask;
   onCtx: (e: React.MouseEvent, t: DlTask) => void;
@@ -99,6 +105,9 @@ function DlRow({
     isInsertAfter: boolean;
     onMouseDown?: (e: React.MouseEvent) => void;
   };
+  onRowClick?: (t: DlTask, e: React.MouseEvent) => void;
+  onMode?: (t: DlTask, m: string) => void;
+  selected?: boolean;
   onPause?: (t: DlTask) => void;
   onResume?: (t: DlTask) => void;
   onRestart?: (t: DlTask) => void;
@@ -118,12 +127,13 @@ function DlRow({
     failed: "下载失败",
   };
 
-  const rowBg =
+  const baseBg =
     t.status === "done"
       ? "bg-lavender-row"
       : t.status === "failed"
         ? "bg-amber-row"
         : "bg-white";
+  const bg = selected ? "bg-selected-row" : baseBg;
 
   /* 行内容（进度条层 + 信息 grid），浮行与占位共用 */
   const inner = (
@@ -137,7 +147,7 @@ function DlRow({
       )}
 
       <div
-        className="relative grid grid-cols-[1fr_140px_80px_90px_120px] items-center h-14 px-3 gap-2"
+        className="relative grid grid-cols-[1fr_110px_70px_80px_118px_120px] items-center h-14 px-3 gap-2"
         onContextMenu={(e) => onCtx(e, t)}
       >
         {/* 文件名（溢出隐藏，tooltip 完整名） */}
@@ -167,6 +177,14 @@ function DlRow({
               ? t.speed
               : fmtSpeed(t.speed)
             : "—"}
+        </div>
+
+        {/* 压缩模式：默认不压缩；选了模式则下载完成后自动入压缩队列（任何状态都可改） */}
+        <div
+          className="min-w-0"
+          onMouseEnter={(e) => show(e.currentTarget, t.compressMode && t.compressMode !== "none" ? "下载完成后自动压缩" : "下载完成后不压缩，可后续手动添加压缩")}
+        >
+          <Select value={t.compressMode ?? "none"} onChange={(m) => onMode?.(t, m)} options={DL_MODES} className="w-full" />
         </div>
 
         {/* 操作（内容层在进度条之上，不被遮挡） */}
@@ -225,8 +243,17 @@ function DlRow({
   return (
     <div
       onMouseDown={drag?.onMouseDown}
-      className={`relative rounded-lg border border-border-soft mb-1.5 overflow-hidden ${rowBg}
+      onClick={
+        onRowClick
+          ? (e) => {
+              if ((e.target as HTMLElement).closest("button, select, input, a")) return;
+              onRowClick(t, e);
+            }
+          : undefined
+      }
+      className={`relative rounded-lg border border-border-soft mb-1.5 overflow-hidden ${bg}
         ${drag?.onMouseDown ? "cursor-grab active:cursor-grabbing select-none" : ""}
+        ${selected ? "ring-1 ring-brand-400/60" : ""}
         transition-transform duration-150 ease-out
         ${drag?.isInsertBefore ? "shadow-[0_-3px_0_0_#005CE6]" : ""}
         ${drag?.isInsertAfter ? "shadow-[0_3px_0_0_#005CE6]" : ""}
@@ -243,10 +270,16 @@ export function DownloadPanel({
   dlWorkers = 3,
   dlDir = "",
   onActivityChange,
+  onCompress,
+  active = true,
 }: {
   dlWorkers?: number;
   dlDir?: string;
   onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
+  /* 下载完成且选了压缩模式 → 自动加入压缩队列队尾（App 接线到 CompressPanel.addDownloadedTask） */
+  onCompress?: (path: string, name: string, mode: string) => void;
+  /* 当前是否为可见面板：隐藏面板不响应 Delete/Backspace（多选删除只作用于当前面板） */
+  active?: boolean;
 }) {
   const [url, setUrl] = useState("");
   const [probeState, setProbeState] = useState<"idle" | "probing" | "done">("idle");
@@ -255,11 +288,17 @@ export function DownloadPanel({
   const [fileOver, setFileOver] = useState(false);
   const [probeErr, setProbeErr] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; t: DlTask } | null>(null);
+  /* 多选（Ctrl/Shift；运行中不可选；Delete 或右键批量移出） */
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
   /* 格式列表表头排序：分辨率/格式/编码/大小 可点击，同列点击翻转方向 */
   const [sortKey, setSortKey] = useState<{ key: "res" | "ext" | "codec" | "size"; dir: 1 | -1 }>({ key: "res", dir: 1 });
   const show = useTip();
   const inputRef = useRef<HTMLInputElement>(null);
   const engine = useEngine();
+  /* tasks 镜像：引擎事件回调里读最新任务（判断 done 任务的压缩模式） */
+  const tasksRef = useRef<DlTask[]>([]);
+  tasksRef.current = tasks;
 
   /* 排序辅助：分辨率数字 / 大小字节数 */
   const resNum = (s: string) => {
@@ -296,6 +335,11 @@ export function DownloadPanel({
   const ctxItems = (): CtxItem[] => {
     if (!ctx) return [];
     const { t } = ctx;
+    /* 多选（右键行在选中集合内）：只提供批量移出——不提供打开文件/目录，
+       不同文件所属目录不同，多选打开会弹出一堆资源管理器 */
+    if (sel.size > 1 && sel.has(t.id)) {
+      return [{ label: `移出队列（${sel.size} 项）`, onClick: removeSelected }];
+    }
     const p = t.path || "";
     const items: CtxItem[] = [];
     if (t.status === "done" && p) {
@@ -312,6 +356,75 @@ export function DownloadPanel({
     });
     return items;
   };
+
+  /* 单选/多选（对齐压缩面板）：运行中不可选；Ctrl 切换、Shift 范围、普通点击 toggle */
+  const handleRowClick = (t: DlTask, e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    if (t.status === "downloading" || t.status === "parsing" || t.status === "merging") return; // 运行中不可选
+    if (e.ctrlKey || e.metaKey) {
+      setSel((prev) => {
+        const next = new Set(prev);
+        if (next.has(t.id)) next.delete(t.id);
+        else next.add(t.id);
+        return next;
+      });
+      setAnchor(t.id);
+    } else if (e.shiftKey) {
+      // 范围选择：按展示顺序（下载中/合并 → 等待/暂停/失败 → 完成）从锚点跨到当前行
+      const order = [...activeTasks, ...sortableTasks, ...doneTasks].map((x) => x.id);
+      const ai = anchor ? order.indexOf(anchor) : -1;
+      const ti = order.indexOf(t.id);
+      if (ai >= 0 && ti >= 0) {
+        const [lo, hi] = ai < ti ? [ai, ti] : [ti, ai];
+        setSel(new Set(order.slice(lo, hi + 1).filter((id) => id !== undefined)));
+      } else {
+        setSel(new Set([t.id]));
+        setAnchor(t.id);
+      }
+    } else {
+      // 普通点击：已选中该行 → 取消选中（再点一下取消）；未选中 → 单选
+      setSel((prev) => {
+        if (prev.size === 1 && prev.has(t.id)) {
+          setAnchor(null);
+          return new Set();
+        }
+        return new Set([t.id]);
+      });
+      setAnchor(t.id);
+    }
+  };
+
+  /* 批量移出：完成态仅移出列表（保留文件）；非完成态引擎清理临时缓存/进程（dl_remove） */
+  const removeSelected = () => {
+    const ids = [...sel].filter((id) => {
+      const x = tasks.find((t) => t.id === id);
+      return x && x.status !== "downloading" && x.status !== "parsing" && x.status !== "merging";
+    });
+    if (ids.length === 0) return;
+    ids.forEach((id) => {
+      const x = tasks.find((t) => t.id === id);
+      if (x && x.status !== "done" && x.taskId != null) {
+        void engine.call("dl_remove", { task_id: x.taskId });
+      }
+    });
+    setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
+    setSel(new Set());
+  };
+
+  /* Delete / Backspace 键删除选中（仅当前可见面板；焦点不在输入框时） */
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) return;
+      if (sel.size === 0) return;
+      e.preventDefault();
+      removeSelected();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, sel, tasks]);
 
   /* 引擎格式 → UI 格式行 */
   const toDlFormat = (f: Record<string, unknown>): DlFormat => {
@@ -351,13 +464,18 @@ export function DownloadPanel({
   const doneTasks = tasks.filter((t) => t.status === "done");
 
   /* 下载池拖拽排序（自定义指针实现：拎起浮行 + 其他行平滑挤开）
-     仅等待/暂停可拖；下载失败的行不可拖（重新下载进入等待队列后才能拖） */
+     仅等待/暂停可拖；下载失败的行不可拖（重新下载进入等待队列后才能拖）；
+     可拖行按下未拖拽（<5px）视为点击 → 走多选逻辑 */
   const dragSort = useDragSort<DlTask>(
     sortableTasks,
     DL_ROW_H,
     (t) => t.status !== "failed",
     (next) => {
       setTasks([...activeTasks, ...next, ...doneTasks]);
+    },
+    (id, e) => {
+      const t = sortableTasks.find((x) => x.id === id);
+      if (t) handleRowClick(t, e);
     },
   );
 
@@ -439,15 +557,23 @@ export function DownloadPanel({
         setTasks((prev) => prev.filter((t) => t.taskId !== tid));
         return;
       }
+      /* 下载完成：若该任务选了压缩模式且有输出路径 → 自动加入压缩队列队尾
+         （读 tasksRef 最新镜像；onCompress 由 App 接线到 CompressPanel） */
+      if (state === "done") {
+        const cur = tasksRef.current.find((t) => t.taskId === tid);
+        if (cur && cur.compressMode && cur.compressMode !== "none" && path) {
+          onCompress?.(path, name || cur.name, cur.compressMode);
+        }
+      }
       setTasks((prev) => {
         const existing = prev.find((t) => t.taskId === tid);
         if (!existing) {
-          return [...prev, { id: `dl${tid}`, taskId: tid, name: name || `任务 #${tid}`, path, status: state, got, total, speed }];
+          return [...prev, { id: `dl${tid}`, taskId: tid, name: name || `任务 #${tid}`, path, status: state, got, total, speed, compressMode: "none" }];
         }
         return prev.map((t) => (t.taskId === tid ? { ...t, name: name || t.name, path: path || t.path, status: state, got, total, speed } : t));
       });
     });
-  }, [engine]);
+  }, [engine, onCompress]);
 
   /* 暂停：引擎杀进程保留断点，本地乐观更新 */
   const pause = (t: DlTask) => {
@@ -472,6 +598,10 @@ export function DownloadPanel({
     if (t.taskId != null) void engine.call("dl_remove", { task_id: t.taskId });
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
   };
+
+  /* 行压缩模式：默认"不压缩"，选了模式则下载完成后自动入压缩队列 */
+  const setMode = (id: string, m: string) =>
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, compressMode: m } : t)));
 
   const doneCount = useMemo(() => tasks.filter((t) => t.status === "done").length, [tasks]);
 
@@ -608,10 +738,23 @@ export function DownloadPanel({
 
       {/* 下载池 */}
       <div className="flex-1 min-h-0 px-4 pb-4 flex flex-col">
-        <div className="flex items-center justify-between mb-2 shrink-0">
-          <div className="text-[12px] font-semibold text-text-main">
-            下载池 <span className="text-text-sub font-normal">（{tasks.length} 项 · 完成 {doneCount}）</span>
+        {/* 标题行固定高度（h-5）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
+        <div className="flex items-center justify-between mb-2 shrink-0 h-5 overflow-hidden">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="text-[12px] font-semibold text-text-main whitespace-nowrap">
+              下载池 <span className="text-text-sub font-normal">（{tasks.length} 项 · 完成 {doneCount}）</span>
+            </div>
+            {sel.size > 0 && (
+              <div className="text-[11px] text-text-sub whitespace-nowrap">可使用 Ctrl 或 Shift 多选移除队列</div>
+            )}
           </div>
+          {sel.size > 0 ? (
+            <button onClick={removeSelected} className="text-[12px] font-medium text-danger hover:underline shrink-0">
+              删除选中（{sel.size}）
+            </button>
+          ) : (
+            <div className="text-[11px] text-text-sub whitespace-nowrap">排队中可拖动调整优先级</div>
+          )}
         </div>
         <div
           onDragOver={(e) => {
@@ -637,6 +780,7 @@ export function DownloadPanel({
                   got: 0,
                   total: 0,
                   speed: 5.4 * 1024 ** 2,
+                  compressMode: "none",
                 })),
               ]);
               return;
@@ -653,9 +797,13 @@ export function DownloadPanel({
                   got: 0,
                   total: 0,
                   speed: 5.4 * 1024 ** 2,
+                  compressMode: "none",
                 },
               ]);
             }
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSel(new Set()); // 点击列表空白取消选中
           }}
           className={`relative flex-1 min-h-0 overflow-y-auto pr-1 rounded-lg transition-colors ${
             fileOver ? "bg-brand-50 ring-2 ring-brand-400/70 ring-inset" : ""
@@ -668,7 +816,7 @@ export function DownloadPanel({
             </div>
           ) : (
             <>
-              {/* 下载中/合并中：固定顶部，不参与拖拽 */}
+              {/* 下载中/合并中：固定顶部，不参与拖拽；运行中不可选（不传 selected/onRowClick） */}
               {activeTasks.map((t) => (
                 <DlRow
                   key={t.id}
@@ -676,9 +824,12 @@ export function DownloadPanel({
                   onCtx={openCtx}
                   onPause={pause}
                   onDelete={remove}
+                  onMode={(x, m) => setMode(x.id, m)}
                 />
               ))}
-              {/* 等待/暂停/失败：可拖拽排序（独立子容器，坐标从本区顶部算起） */}
+              {/* 等待/暂停/失败：可拖拽排序（独立子容器，坐标从本区顶部算起）；
+                  可拖行按下未拖拽视为点击→多选（走 useDragSort 的 onRowClick）；
+                  失败行不可拖，直接行 onClick 走多选 */}
               <div ref={dragSort.containerRef} className="relative">
                 {sortableTasks.map((t, i) => {
                   const p = dragSort.rowProps(t, i);
@@ -692,16 +843,27 @@ export function DownloadPanel({
                         ...p,
                         onMouseDown: draggable ? (e) => dragSort.onRowMouseDown(e, t.id) : undefined,
                       }}
+                      onRowClick={draggable ? undefined : (x, e) => handleRowClick(x, e)}
+                      selected={sel.has(t.id)}
                       onResume={resume}
                       onRestart={restart}
                       onDelete={remove}
+                      onMode={(x, m) => setMode(x.id, m)}
                     />
                   );
                 })}
               </div>
-              {/* 完成：固定底部，不参与拖拽 */}
+              {/* 完成：固定底部，不参与拖拽；可点选/多选 */}
               {doneTasks.map((t) => (
-                <DlRow key={t.id} t={t} onCtx={openCtx} onDelete={remove} />
+                <DlRow
+                  key={t.id}
+                  t={t}
+                  onCtx={openCtx}
+                  onRowClick={(x, e) => handleRowClick(x, e)}
+                  selected={sel.has(t.id)}
+                  onDelete={remove}
+                  onMode={(x, m) => setMode(x.id, m)}
+                />
               ))}
             </>
           )}

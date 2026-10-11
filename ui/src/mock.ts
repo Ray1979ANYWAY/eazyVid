@@ -20,6 +20,7 @@ export type DlTask = {
   got: number;
   total: number;
   speed: number | string;
+  compressMode?: string; // "none"=不压缩；否则为 COMPRESS_MODES 值（下载完成后自动入压缩队列用）
 };
 
 export type CmpTask = {
