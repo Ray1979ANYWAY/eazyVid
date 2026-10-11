@@ -254,10 +254,35 @@ def _compress_worker(req, rec):
     def log(msg):
         emit({"ev": "log", "msg": msg})
 
+    t_start = time.monotonic()
+    last_emit_t = [0.0]
+    cached_eta = [None]
+    eta_ema = [None]
+
     def progress(frac, us, duration):
-        eta_sec = None
-        if frac and frac > 0.001:
-            eta_sec = (1.0 / frac - 1.0) * (us / 1_000_000.0)
+        now = time.monotonic()
+        elapsed_clock = now - t_start
+        video_pos = (us / 1_000_000.0) if us else 0.0
+
+        # 每 1.0 秒重新评估并平滑更新一次 ETA（低于 2.5 秒初始缓冲或进度极小时不估）
+        if now - last_emit_t[0] >= 1.0 or frac >= 0.999:
+            last_emit_t[0] = now
+            if elapsed_clock >= 2.5 and video_pos > 0.5 and duration and duration > video_pos:
+                remaining_video = max(0.0, duration - video_pos)
+                # 耗时系数 = 实际走过的现实秒数 / 视频走过的流秒数
+                # 即：每压缩 1 秒视频内容，现实中需要花费多少秒
+                cost_ratio = elapsed_clock / video_pos
+                instant_eta = remaining_video * cost_ratio
+
+                # 指数平滑（alpha=0.35），抑制复杂场景带来的瞬时帧率抖动，让倒计时平稳单调递减
+                if eta_ema[0] is None:
+                    eta_ema[0] = instant_eta
+                else:
+                    eta_ema[0] = 0.35 * instant_eta + 0.65 * eta_ema[0]
+                cached_eta[0] = max(0.0, eta_ema[0])
+            elif frac >= 0.999:
+                cached_eta[0] = 0.0
+
         # dur 显示为 总时长 mm:ss（_fmt_pos(0,dur) 提取后半段，等价 _fmt_time）
         dur_txt = ""
         try:
@@ -266,12 +291,13 @@ def _compress_worker(req, rec):
                 dur_txt = p.split("/")[1]
         except Exception:
             pass
+
         emit({
             "ev": "cmp", "id": rec["id"], "state": "compressing",
             "pct": round(frac * 100, 1),
-            "pos": eazyvid._fmt_pos(us / 1_000_000.0, duration),
+            "pos": eazyvid._fmt_pos(video_pos, duration),
             "dur": dur_txt,
-            "eta": eta_sec, "mode": mode,
+            "eta": cached_eta[0], "mode": mode,
         })
 
     try:
