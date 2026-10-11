@@ -95,8 +95,8 @@ export function useDragSort<T extends { id: string }>(
       // 物理槽位（不含拖起行：有效行占 0..n-2 槽）
       let p = Math.floor(mouseY / rowHeight);
       p = Math.max(0, Math.min(p, n - 2));
-      // 换槽阈值：浮行中心越过槽位的 65% 才挤开下一行（原来 50%，用户觉得挤得太早，容易困惑）
-      const mid = (p + 0.65) * rowHeight;
+      // 换槽阈值：浮行中心越过槽位的 75% 才挤开下一行（用户要求更晚换槽，减少误触感）
+      const mid = (p + 0.75) * rowHeight;
       const insert = mouseY < mid ? p : p + 1;
       insertIdxRef.current = insert;
       setInsertIdx(insert);

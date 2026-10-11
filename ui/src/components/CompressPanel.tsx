@@ -647,21 +647,22 @@ export function CompressPanel({
 
       {/* 任务列表 */}
       <div className="flex-1 min-h-0 px-4 pb-3 flex flex-col">
-        <div className="flex items-center justify-between mb-2 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="text-[12px] font-semibold text-text-main">
+        {/* 标题行固定高度（h-5）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
+        <div className="flex items-center justify-between mb-2 shrink-0 h-5 overflow-hidden">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="text-[12px] font-semibold text-text-main whitespace-nowrap">
               压缩任务 <span className="text-text-sub font-normal">（{tasks.length} 项）</span>
             </div>
             {sel.size > 0 && (
-              <div className="text-[11px] text-text-sub">可使用 Ctrl 或 Shift 多选移除队列</div>
+              <div className="text-[11px] text-text-sub whitespace-nowrap">可使用 Ctrl 或 Shift 多选移除队列</div>
             )}
           </div>
           {sel.size > 0 ? (
-            <Button variant="danger" size="sm" onClick={removeSelected}>
+            <button onClick={removeSelected} className="text-[12px] font-medium text-danger hover:underline shrink-0">
               删除选中（{sel.size}）
-            </Button>
+            </button>
           ) : (
-            <div className="text-[11px] text-text-sub">可拖入文件 · 排队中可拖动调整优先级</div>
+            <div className="text-[11px] text-text-sub whitespace-nowrap">可拖入文件 · 排队中可拖动调整优先级</div>
           )}
         </div>
         <div
