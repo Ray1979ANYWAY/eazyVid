@@ -1,15 +1,73 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Sidebar, type Panel } from "./components/Sidebar";
 import { DownloadPanel } from "./components/DownloadPanel";
 import { CompressPanel, type CompressPanelHandle } from "./components/CompressPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { WindowControls } from "./components/WindowControls";
-import { TipProvider, Dialog, Button } from "./components/ui";
+import { TipProvider, Dialog, Button, Toggle, IconBtn, Icon, StatusDot, useTip } from "./components/ui";
+import { Logo } from "./components/Logo";
 import { useEngine } from "./hooks/useEngine";
+import { diag } from "./diag";
+import {
+  type LangSetting,
+  resolveLang,
+  translate,
+  I18nProvider,
+  useI18n,
+  type TranslationKey,
+} from "./i18n";
+
+export type Panel = "download" | "compress";
+
+/* 底部持久栏（无论切换到哪个面板，右下角永远固定存在）：左侧根据当前面板展示状态/收益，右侧固定为关机开关 */
+function GlobalFooter({
+  panel,
+  cmpGain,
+  dlDoneCount,
+  shutdown,
+  onShutdownChange,
+}: {
+  panel: Panel;
+  cmpGain: number;
+  dlDoneCount: number;
+  shutdown: boolean;
+  onShutdownChange: (v: boolean) => void;
+}) {
+  const show = useTip();
+  const { t } = useI18n();
+  return (
+    <footer className="shrink-0 h-12 px-4 border-t border-border-soft bg-white/70 flex items-center gap-4">
+      {panel === "compress" ? (
+        <div className="text-[14px] text-text-main tabular-nums">
+          {t("footer.gain", { gain: (cmpGain / 1024 ** 3).toFixed(2) })}
+        </div>
+      ) : dlDoneCount > 0 ? (
+        <div className="text-[14px] text-text-main tabular-nums">
+          {t("footer.dlCount", { count: dlDoneCount })}
+        </div>
+      ) : (
+        <div className="text-[14px] text-text-sub tabular-nums" />
+      )}
+      <div className="flex-1" />
+      <div
+        className="flex items-center gap-2 select-none"
+        onMouseEnter={(e) => show(e.currentTarget, t("footer.shutdownTip"))}
+      >
+        <Toggle checked={shutdown} onChange={onShutdownChange} />
+        <span
+          className="text-[14px] text-text-main cursor-pointer"
+          onClick={() => onShutdownChange(!shutdown)}
+        >
+          {t("footer.shutdown")}
+        </span>
+      </div>
+    </footer>
+  );
+}
 
 export type Settings = {
+  lang: LangSetting; // 界面语言：system 跟随系统 | zh-CN 简体中文 | en 英文
   dlWorkers: number;
   compressWorkers: number;
   dlDir: string; // 下载目录；空 = 引擎默认（安装目录\downloaded）
@@ -21,6 +79,7 @@ export type Settings = {
 };
 
 const DEFAULTS: Settings = {
+  lang: "system",
   dlWorkers: 3,
   compressWorkers: 3,
   dlDir: "",
@@ -58,8 +117,10 @@ function App() {
   }, [settings]);
 
   // 面板活动状态（面板组件上报）：有运行任务=绿闪、有失败=黄，与选中状态无关
-  const [dlAct, setDlAct] = useState({ busy: false, fail: false, running: 0 });
-  const [cmpAct, setCmpAct] = useState({ busy: false, fail: false, running: 0 });
+  const [dlAct, setDlAct] = useState({ busy: false, fail: false, running: 0, queued: 0 });
+  const [cmpAct, setCmpAct] = useState({ busy: false, fail: false, running: 0, queued: 0 });
+  const [cmpGain, setCmpGain] = useState(0);
+  const [dlDoneCount, setDlDoneCount] = useState(0);
   const [quitWarn, setQuitWarn] = useState(false);
   const dotOf = (act: { busy: boolean; fail: boolean }, selected: boolean) =>
     act.fail ? "fail" : act.busy ? "busy" : selected ? "active" : "idle";
@@ -97,15 +158,58 @@ function App() {
     void invoke("quit_confirmed");
   };
 
-  /* 每次启动检查 ffmpeg 是否有新的稳定版（引擎就绪后一次） */
+  /* 全局事件捕获探针：定位任何点击被谁拦截、命中什么元素 */
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest("button");
+      const tag = target?.tagName || "";
+      const cls = (target?.className || "").toString().slice(0, 35);
+      diag(`CAPTURE_POINTERDOWN tag=${tag} cls=${cls} btn=${Boolean(btn)} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)}`);
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest("button");
+      const tag = target?.tagName || "";
+      diag(`CAPTURE_CLICK tag=${tag} btn=${Boolean(btn)} x=${Math.round(e.clientX)} y=${Math.round(e.clientY)}`);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("click", onClick, true);
+    };
+  }, []);
+
+  /* 全局右键限制：在非文本框和非任务行的地方禁用鼠标右键（屏蔽 WebView2 默认右键菜单） */
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // 允许输入框/文本域：input, textarea, 可编辑内容
+      if (target.closest("input, textarea, [contenteditable='true']")) return;
+      // 允许任务行：带 data-task-row 属性的下载与压缩行（触发组件自带的自定义 ContextMenu）
+      if (target.closest("[data-task-row]")) return;
+      // 允许已弹出的右键菜单容器自身
+      if (target.closest("[data-ctx-menu]")) return;
+      // 其余所有区域一律阻止浏览器原生右键菜单
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
+  /* 每次启动检查 ffmpeg 是否有新的稳定版（引擎就绪后仅检查一次，防高频重跑堵塞 RPC） */
   const { ready: engReady, call: engCall, on: engOn } = useEngine();
   const [ffmpegUpd, setFfmpegUpd] = useState<{ current: string; latest: string; nightly: boolean } | null>(null);
   const [ffmpegBusy, setFfmpegBusy] = useState(false);      // 更新中
   const [ffmpegPct, setFfmpegPct] = useState(0);            // 下载进度
   const [ffmpegConfirm, setFfmpegConfirm] = useState(false); // 确认弹窗
   const [ffmpegMsg, setFfmpegMsg] = useState<string | null>(null); // 完成/失败提示
+  const ffmpegCheckedRef = useRef(false);
   useEffect(() => {
-    if (!engReady) return;
+    if (!engReady || ffmpegCheckedRef.current) return;
+    ffmpegCheckedRef.current = true;
     let cancelled = false;
     engCall("ffmpeg_check")
       .then((r) => {
@@ -130,6 +234,10 @@ function App() {
     });
   }, [engOn]);
 
+  const currLang = resolveLang(settings.lang);
+  const t = (key: TranslationKey, params?: Record<string, string | number>) =>
+    translate(currLang, key, params);
+
   /* 一键更新：下载稳定版 → 自动替换（引擎内备份旧版，失败回滚） */
   const doUpdate = async () => {
     setFfmpegConfirm(false);
@@ -138,10 +246,10 @@ function App() {
     try {
       const r = (await engCall("ffmpeg_update")) as { ok?: boolean; version?: string; error?: string };
       if (r?.ok) {
-        setFfmpegMsg(r.version ? `已自动更新到 ffmpeg ${r.version}` : "已自动更新到最新稳定版");
+        setFfmpegMsg(r.version ? t("ffmpeg.success", { version: r.version }) : t("ffmpeg.successDefault"));
         setFfmpegUpd(null);
       } else {
-        setFfmpegMsg(r?.error || "更新失败，请重试");
+        setFfmpegMsg(r?.error || t("ffmpeg.fail"));
       }
     } catch (e) {
       setFfmpegMsg(String(e instanceof Error ? e.message : e));
@@ -150,82 +258,215 @@ function App() {
     }
   };
 
+  /* 全局自动关机：下载与压缩所有任务全部结束后自动关机（倒计时 60 秒可取消） */
+  const [shutdown, setShutdown] = useState(false);
+  const [shutdownPending, setShutdownPending] = useState(false);
+  const [shutdownCountdown, setShutdownCountdown] = useState(60);
+  const hadTasksRef = useRef(false);
+
+  const totalActive = dlAct.running + dlAct.queued + cmpAct.running + cmpAct.queued;
+
+  useEffect(() => {
+    if (totalActive > 0) {
+      hadTasksRef.current = true;
+    }
+  }, [totalActive]);
+
+  const cancelShutdown = useCallback(() => {
+    setShutdownPending(false);
+    setShutdown(false);
+    setShutdownCountdown(60);
+    void engCall("cancel_shutdown");
+  }, [engCall]);
+
+  useEffect(() => {
+    if (!shutdown || !hadTasksRef.current || totalActive > 0 || shutdownPending) {
+      return;
+    }
+    // 防抖 1.5 秒：给任务转换/完成事件留足缓冲，确认确实无任何进行中或排队任务
+    const timer = setTimeout(() => {
+      if (hadTasksRef.current && totalActive === 0 && !shutdownPending) {
+        hadTasksRef.current = false;
+        setShutdownCountdown(60);
+        setShutdownPending(true);
+        void engCall("system_shutdown", { delay: 60 });
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [shutdown, totalActive, shutdownPending, engCall]);
+
+  useEffect(() => {
+    if (!shutdownPending) return;
+    const timer = setInterval(() => {
+      setShutdownCountdown((c) => {
+        if (c <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [shutdownPending]);
+
   return (
-    <TipProvider>
-      {/* 外层：全窗口可拖拽；顶部 44px 为自绘标题栏区（右上角为窗口控制按钮） */}
-      <div className="flex h-full w-full" data-tauri-drag-region>
-        <Sidebar
-          panel={panel}
-          onPanel={setPanel}
-          dlDot={dlDot}
-          cmpDot={cmpDot}
-          onSettings={() => setSettingsOpen(true)}
-        />
-        <main className="flex-1 min-w-0 min-h-0 pt-11 flex flex-col" data-tauri-drag-region>
+    <I18nProvider setting={settings.lang}>
+      <TipProvider>
+      {/* 外层：内容区不参与窗口拖拽（data-tauri-drag-region 会拦截图标按钮点击）；
+          拖拽仅限顶部自绘标题栏区与侧栏空白 */}
+      <div className="flex flex-col h-full w-full bg-surface">
+        {/* 自绘顶部无边框深色标题栏（48px）：
+            - 保持 decorations: false 无原生标题栏无边框设计；
+            - 背景采用品牌深藏青蓝（#14185e），完美衬托白色底盘的 Logo；
+            - 左侧：Logo + eazyVid 纯白品牌标；
+            - 中间：深色胶囊分段导航（Segmented Control）切换下载与压缩面板，带运行状态圆点与任务数徽标；
+            - 空白区域带 data-tauri-drag-region 允许抓取拖拽窗口与双击最大化；
+            - 右侧：设置按钮，预留 138px 给右上角固定的 WindowControls。 */}
+        <header className="h-12 shrink-0 border-b border-black/30 bg-[#14185e] flex items-center px-4 select-none relative z-40">
+          {/* 左侧：Logo 与标题（深色背景下白底 Logo 清晰凸显） */}
+          <div className="flex items-center gap-2.5 shrink-0" data-tauri-drag-region>
+            <div className="pointer-events-none flex items-center gap-2.5">
+              <Logo size={26} />
+              <span className="font-bold text-[17px] tracking-tight text-white font-display">eazyVid</span>
+            </div>
+          </div>
+
+          {/* 左侧可拖拽留白区 */}
+          <div className="flex-1 h-full min-w-4" data-tauri-drag-region />
+
+          {/* 中间：胶囊分段导航 (Segmented Control) */}
+          <div className="shrink-0 flex items-center bg-black/25 p-0.5 rounded-xl border border-white/10 shadow-inner">
+            <button
+              type="button"
+              onClick={() => setPanel("download")}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[15px] font-medium transition-all duration-150 cursor-pointer ${
+                panel === "download"
+                  ? "bg-white text-slate-900 shadow-md font-semibold"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              <StatusDot mode={dlDot} />
+              <span>{t("nav.download")}</span>
+              {dlAct.running + dlAct.queued > 0 && (
+                <span
+                  className={`text-[12px] px-2 py-0.5 rounded-full font-semibold tabular-nums ${
+                    panel === "download" ? "bg-slate-100 text-slate-700" : "bg-white/15 text-white/90"
+                  }`}
+                >
+                  {dlAct.running + dlAct.queued}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanel("compress")}
+              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[15px] font-medium transition-all duration-150 cursor-pointer ${
+                panel === "compress"
+                  ? "bg-white text-slate-900 shadow-md font-semibold"
+                  : "text-white/70 hover:text-white hover:bg-white/10"
+              }`}
+            >
+              <StatusDot mode={cmpDot} />
+              <span>{t("nav.compress")}</span>
+              {cmpAct.running + cmpAct.queued > 0 && (
+                <span
+                  className={`text-[12px] px-2 py-0.5 rounded-full font-semibold tabular-nums ${
+                    panel === "compress" ? "bg-slate-100 text-slate-700" : "bg-white/15 text-white/90"
+                  }`}
+                >
+                  {cmpAct.running + cmpAct.queued}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* 右侧可拖拽留白区 */}
+          <div className="flex-1 h-full min-w-4" data-tauri-drag-region />
+
+          {/* 右侧操作区：设置按钮 + 为右上角固定 WindowControls 预留 138px */}
+          <div className="shrink-0 flex items-center gap-1 mr-[138px]">
+            <IconBtn
+              tip={t("nav.settings")}
+              onClick={() => setSettingsOpen(true)}
+              className="w-8.5 h-8.5 rounded-lg text-white/75 hover:text-white hover:bg-white/10"
+            >
+              <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.6 7.6 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.6 7.6 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2z" size={16} />
+            </IconBtn>
+          </div>
+        </header>
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col">
           {/* ffmpeg 新版提示（启动检查一次；可关闭） */}
           {ffmpegUpd && (
-            <div className="shrink-0 mx-4 mt-3 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
-              <svg width="14" height="14" viewBox="0 0 24 24" className="shrink-0" style={{ color: "#B45309" }}>
+            <div className="shrink-0 mx-4 mt-3 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[13.5px] text-amber-900">
+              <svg width="15" height="15" viewBox="0 0 24 24" className="shrink-0" style={{ color: "#B45309" }}>
                 <path d="M12 9v5m0 3.5v.5M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span className="flex-1 min-w-0">
-                {ffmpegUpd.nightly ? (
-                  <>
-                    当前 ffmpeg 是非稳定版（<b>{ffmpegUpd.current}</b>），最新稳定版为 <b>{ffmpegUpd.latest}</b>
-                    ，建议更换以获得更好的稳定性与压缩性能
-                  </>
-                ) : (
-                  <>
-                    发现 ffmpeg 新版本 <b>{ffmpegUpd.latest}</b>（当前 {ffmpegUpd.current}），更新可提升压缩性能与格式兼容性
-                  </>
-                )}
+                {ffmpegUpd.nightly
+                  ? t("ffmpeg.nightlyTip", { current: ffmpegUpd.current, latest: ffmpegUpd.latest })
+                  : t("ffmpeg.newerTip", { current: ffmpegUpd.current, latest: ffmpegUpd.latest })}
               </span>
               <div className="shrink-0 flex items-center gap-2">
                 {ffmpegBusy ? (
-                  <span className="text-amber-800 text-[12px] tabular-nums">
-                    {ffmpegPct < 100 ? `下载中 ${ffmpegPct}%` : "解压替换中…"}
+                  <span className="text-amber-800 text-[13px] tabular-nums">
+                    {ffmpegPct < 100 ? t("ffmpeg.downloading", { pct: ffmpegPct }) : t("ffmpeg.extracting")}
                   </span>
                 ) : (
                   <button
                     onClick={() => setFfmpegConfirm(true)}
-                    className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-white text-[12px] hover:bg-amber-700 cursor-pointer"
+                    className="shrink-0 rounded-md bg-amber-600 px-3 py-1 text-white text-[13px] hover:bg-amber-700 cursor-pointer"
                   >
-                    一键更新
+                    {t("ffmpeg.updateBtn")}
                   </button>
                 )}
                 <button
                   onClick={() => setFfmpegUpd(null)}
                   disabled={ffmpegBusy}
-                  className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer disabled:opacity-50"
+                  className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer text-[13px] disabled:opacity-50"
                 >
-                  知道了
+                  {t("ffmpeg.dismiss")}
                 </button>
               </div>
             </div>
           )}
           {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
-          <div className={panel === "download" ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
-            <DownloadPanel
-              dlWorkers={settings.dlWorkers}
-              dlDir={settings.dlDir}
-              onActivityChange={(b, f, running) => setDlAct({ busy: b, fail: f, running })}
-              onCompress={(path, name, mode) => cmpRef.current?.addDownloadedTask(path, name, mode)}
-              active={panel === "download"}
-            />
+          <div className="flex-1 min-h-0 relative flex flex-col">
+            <div className={panel === "download" ? "h-full w-full flex flex-col" : "hidden"}>
+              <DownloadPanel
+                dlWorkers={settings.dlWorkers}
+                dlDir={settings.dlDir}
+                onActivityChange={(b, f, running, queued) => setDlAct({ busy: b, fail: f, running, queued })}
+                onDoneCountChange={setDlDoneCount}
+                onCompress={(path, name, mode) => cmpRef.current?.addDownloadedTask(path, name, mode)}
+                active={panel === "download"}
+              />
+            </div>
+            <div className={panel === "compress" ? "h-full w-full flex flex-col" : "hidden"}>
+              <CompressPanel
+                ref={cmpRef}
+                compressWorkers={settings.compressWorkers}
+                outSame={settings.outSame}
+                outDir={settings.outDir}
+                overwrite={settings.overwrite}
+                cover={settings.cover}
+                coverSec={settings.coverSec}
+                onActivityChange={(b, f, running, queued) => setCmpAct({ busy: b, fail: f, running, queued })}
+                onGainChange={setCmpGain}
+                active={panel === "compress"}
+              />
+            </div>
           </div>
-          <div className={panel === "compress" ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
-            <CompressPanel
-              ref={cmpRef}
-              compressWorkers={settings.compressWorkers}
-              outSame={settings.outSame}
-              outDir={settings.outDir}
-              overwrite={settings.overwrite}
-              cover={settings.cover}
-              coverSec={settings.coverSec}
-              onActivityChange={(b, f, running) => setCmpAct({ busy: b, fail: f, running })}
-              active={panel === "compress"}
-            />
-          </div>
+          {/* 底部持久栏（无论切换到哪个面板，右下角永远固定存在）：左侧根据当前面板展示状态/收益，右侧固定为关机开关 */}
+          <GlobalFooter
+            panel={panel}
+            cmpGain={cmpGain}
+            dlDoneCount={dlDoneCount}
+            shutdown={shutdown}
+            onShutdownChange={(v) => {
+              setShutdown(v);
+              if (!v && shutdownPending) cancelShutdown();
+            }}
+          />
         </main>
       </div>
       <WindowControls />
@@ -236,52 +477,65 @@ function App() {
         onChange={setSettings}
       />
       {/* ffmpeg 一键更新确认 */}
-      <Dialog open={ffmpegConfirm} onClose={() => setFfmpegConfirm(false)} title="更新 ffmpeg" width={460}>
-        <div className="text-[13px] leading-relaxed text-text-main">
-          <p>
-            将下载 ffmpeg 最新稳定版（约 160MB）并<b className="text-brand-700">自动替换</b>当前版本，无需手动覆盖。
-          </p>
-          <p className="mt-2 text-text-sub">
-            建议在无压缩任务进行时更新；若替换时文件被占用会提示失败，旧版本自动保留。
-          </p>
+      <Dialog open={ffmpegConfirm} onClose={() => setFfmpegConfirm(false)} title={t("ffmpeg.dlgTitle")} width={480}>
+        <div className="text-[15px] leading-relaxed text-text-main">
+          <p>{t("ffmpeg.dlgDesc")}</p>
+          <p className="mt-2 text-text-sub text-[13px]">{t("ffmpeg.dlgHint")}</p>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setFfmpegConfirm(false)}>
-            取消
+            {t("ffmpeg.cancel")}
           </Button>
-          <Button onClick={() => void doUpdate()}>开始更新</Button>
+          <Button onClick={() => void doUpdate()}>{t("ffmpeg.startUpdate")}</Button>
         </div>
       </Dialog>
 
       {/* ffmpeg 更新完成/失败提示 */}
-      <Dialog open={!!ffmpegMsg} onClose={() => setFfmpegMsg(null)} title="ffmpeg 更新" width={420}>
-        <div className="text-[13px] text-text-main">{ffmpegMsg}</div>
+      <Dialog open={!!ffmpegMsg} onClose={() => setFfmpegMsg(null)} title={t("ffmpeg.resultTitle")} width={440}>
+        <div className="text-[15px] text-text-main">{ffmpegMsg}</div>
         <div className="mt-5 flex justify-end">
-          <Button onClick={() => setFfmpegMsg(null)}>好</Button>
+          <Button onClick={() => setFfmpegMsg(null)}>{t("ffmpeg.ok")}</Button>
         </div>
       </Dialog>
 
       {/* 托盘"退出"且任务进行中：警告弹窗（未完成任务的文件将被删除，源文件保留） */}
-      <Dialog open={quitWarn} onClose={() => setQuitWarn(false)} title="任务进行中" width={480}>
-        <div className="text-[13px] leading-relaxed text-text-main">
+      <Dialog open={quitWarn} onClose={() => setQuitWarn(false)} title={t("quit.title")} width={500}>
+        <div className="text-[15px] leading-relaxed text-text-main">
           <p>
-            当前有 <span className="font-semibold text-brand-700">{dlAct.running + cmpAct.running}</span>{" "}
-            个任务正在进行或暂停（下载 {dlAct.running} 个、压缩 {cmpAct.running} 个）。
+            {t("quit.desc", {
+              total: dlAct.running + cmpAct.running,
+              dl: dlAct.running,
+              cmp: cmpAct.running,
+            })}
           </p>
-          <p className="mt-2">
-            退出会中断这些任务，未完成任务的文件将被删除：压缩的中间输出、下载的临时缓存都会被清除（源文件保留）。
-          </p>
+          <p className="mt-2 text-text-sub text-[13px]">{t("quit.hint")}</p>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setQuitWarn(false)}>
-            取消
+            {t("quit.cancel")}
           </Button>
           <Button variant="danger" onClick={confirmQuit}>
-            确定退出
+            {t("quit.confirm")}
           </Button>
         </div>
       </Dialog>
-    </TipProvider>
+
+      {/* 所有任务完成自动关机倒计时弹窗（60秒内可取消） */}
+      <Dialog open={shutdownPending} onClose={cancelShutdown} title={t("shutdown.title")} width={460}>
+        <div className="text-[15px] leading-relaxed text-text-main">
+          <p>
+            {t("shutdown.desc", { sec: shutdownCountdown })}
+          </p>
+          <p className="mt-2 text-text-sub text-[13px]">{t("shutdown.hint")}</p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="danger" onClick={cancelShutdown}>
+            {t("shutdown.cancel")}
+          </Button>
+        </div>
+      </Dialog>
+      </TipProvider>
+    </I18nProvider>
   );
 }
 

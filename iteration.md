@@ -978,3 +978,214 @@ OK.ru 游客会话（无 cookie 同意/未登录）**不初始化播放器**：�
 - **压缩模式下拉紫色色阶（品牌紫呼应）**：Select 组件新增 tint prop（内联底色覆盖默认白底）。公共色阶表 MODE_TINTS（mock.ts）：画质优先最浅 rgba(215,198,234,.30) → 默认 rgba(189,161,220,.30) → 速度优先 rgba(157,113,205,.30) → AV1 极限压缩最深 rgba(123,44,191,.30)（即图标品牌紫 #7B2CBF @30% 透明度，不再加深）。应用于：下载池每行模式下拉、压缩面板行模式下拉（含 running 禁用态）、压缩面板顶部默认模式下拉。压缩程度由浅到深直观可视化。
 - **下载池完成区虚拟滚动**：已完成任务可能很多（长列表滚动/渲染卡顿）。完成区改为虚拟列表：行高 62（56+mb-1.5），外层列表容器 onScroll 记录 scrollTop + clientHeight，只渲染可视区 ±4 行（absolute 定位 top=i*62 + 总高占位 div），选中/右键/打开文件等交互在虚拟行上照常。下载中区（受线程数限制数量少）与等待/暂停拖拽区保持完整渲染——拖拽逻辑不受影响。
 - 验证：tsc 零错误 → 杀 ui+python → npm run build → ui.exe 启动 → 引擎探针无报错。
+
+### 2026-10-11 迭代（排查与根治：压缩任务行按钮"点击无效"之谜 + RPC 洪峰阻塞根因修复 + 启动器完善）
+- **核心假象与事实还原（被误导的排查链）**：
+  - 用户反复确认症状："压缩任务行内的按钮（终止、删除）点击无效——点了无弹窗、进程继续跑、日志无任何记录"。
+  - 误导性排查线索：此前查看前端到 Rust 探针（`tmp/engine_ui_commands.txt`），发现每 0.5 秒全是 `ffmpeg_check`，使用 tail 查看尾部未看到任何 `STOPBTN`/`DELBTN`，从而得出了"onClick 从未触发、事件被某层拦截"的假说。
+  - 全量日志真相还原：深度检索历史日志全量发现，`15:41`、`15:44`、`15:47` 的 `STOPBTN`、`DELBTN`、`STOPDLG confirm`、`REMOVE`、`cmp_stop` **全部成功触发并落盘**。按钮的 DOM 结构、React onClick 绑定、CSS pointer-events 没有任何问题，onClick 从未失效。
+- **真正根因（复合性假死与延迟）**：
+  1. **`ffmpeg_check` 洪峰死循环拖垮 Python RPC 主线程（延迟高达 5 分钟+）**：
+     - `useEngine.ts` 中的 `call` 与 `on` 未加 `useCallback` 记忆引用；任务每 500ms 推送一次压缩进度导致 `App` 重渲染；
+     - 每次重渲染生成新的 `engCall` 引用，触发 `useEffect` 循环发送 `ffmpeg_check`（每秒 2 条，累积超 2,300 条）；
+     - `engine_rpc.py` 中的 `_cmd_ffmpeg_check` 在主线程**同步**执行 `urllib.request.urlopen("https://ffmpeg.org/releases/")` 网络请求与 `ffmpeg -version` 子进程（单次耗时 2~5 秒）；
+     - 2300 多条请求堆积在 Python 的 stdin 管道缓冲中。Rust 在 15:41:32 写入的 `cmp_stop`（请求 ID 86），Python 拖延到 15:46:56 才处理到（延迟达 5 分 24 秒！）。期间 `ffmpeg.exe` 全速继续跑，用户误以为"点了没反应/停不掉"。
+  2. **UI 终止态缺少乐观更新**：
+     - `CompressPanel.tsx` 的 `stopTask` 仅向引擎发出 `cmp_stop`，行状态死等 Python 回发 `stopped` 事件才变色；
+     - 在 5 分钟的 RPC 延迟下，弹窗关闭后该行依然显示"压缩中"、进度仍在走，用户主观感知"点了毫无反应"。
+  3. **自动补位瞬间启动新任务，造成"杀不掉"错觉**：
+     - 任务移出或终止时，`runningTasks` 数量下降，自动补位 effect 瞬间拉起队首下一个排队任务启动新的 `ffmpeg.exe`；用户看任务管理器里始终有 ffmpeg 在占用 CPU，误认为刚才的终止没生效。
+  4. **弹窗双击/快速连击遮罩秒退（88ms 闪退无感知）**：
+     - `Dialog` 遮罩层原直接使用 `onMouseDown={(e) => e.target === e.currentTarget && onClose()}`；
+     - 用户快速连击/双击按钮时，第 1 下触发弹窗渲染，第 2 下 mousedown 瞬间命中新弹出的全屏遮罩，导致弹窗在 88ms 内被秒关（日志实锤：`15:41:19.449 STOPBTN` → `15:41:19.537 STOPDLG cancel`），肉眼完全察觉不到弹窗出现（"点了无弹窗"）。
+- **完整修复与重构**：
+  - **消灭洪峰与解耦主线程**：
+    - `useEngine.ts`：`call` 与 `on` 全部增加 `useCallback(..., [])` 记忆引用；
+    - `App.tsx`：增加 `ffmpegCheckedRef` 启动单次守护，应用生命周期内仅检查一次；
+    - `engine_rpc.py`：`_cmd_ffmpeg_check` 与 `_cmd_ffmpeg_update` 剥离到独立守护线程（daemon thread）异步执行，RPC 主循环彻底免受耗时 IO 阻塞，命令响应延迟直接从 5 分钟降至 1 毫秒。
+  - **UI 乐观更新与即时视觉反馈**：
+    - `CompressPanel.tsx`：`stopTask` 在确认终止后立即乐观设置 `status = "stopped"`（行底色瞬间变琥珀色、按钮瞬间切为"重新压缩/删除"），提供即时反馈，后端并行执行杀进程。
+    - 行内按钮增加 `e.stopPropagation()` 与 `data-action` 标记。
+  - **消除弹窗连击秒退**：
+    - `ui.tsx`：`Dialog` 遮罩关闭改为 `onClick`，并加入 300ms 打开冷却期，彻底杜绝快速双击按钮导致的遮罩误触秒退。
+  - **全链路点击探针**：
+    - `App.tsx`：挂载 window 捕获阶段（Capture Phase）的 `pointerdown` 与 `click` 全局探针，每一次点击命中元素类型及坐标实时直通写入引擎日志。
+  - **启动器与单实例锁完善**：
+    - 将编译产物 `ui.exe` 与依赖项 `ui_lib.dll` 同步至根目录 `D:\Documents\eazyVid`，并创建根目录一键启动器 `ui.bat`；
+    - 明确 `single_instance` 插件防多开特性与"关闭进托盘"机制，避免后台隐藏运行导致重复双击无反应。
+- **验证**：
+  - `npm run build` 打包通过（308 kB）；
+  - `cargo build` 编译通过（12.16s）；
+  - 彻底清理旧残留进程，归档重置历史日志；
+  - 新实例启动验证：`engine_ui_commands.txt` 与 `engine_reqs.txt` 均只有单条初始记录，延迟仅 1ms，无任何重复洪峰。
+
+### 2026-10-11 全项目深度 Debug 与健壮性优化（并发池信号量竞态修复 + 幽灵任务复活拦截 + 异常清理闭环 + 关机联动完善）
+- **背景与目标**：
+  - 用户发起全项目深度 Debug 请求（"整个项目帮我debug一下"）。
+  - 针对 Python 核心引擎（`eazyvid.py`、`engine_rpc.py`）、Rust 桥接层（`engine.rs`、`lib.rs`）及 React 前端（`DownloadPanel.tsx`、`CompressPanel.tsx`、`ui.tsx`）进行端到端逻辑与边界条件审查。
+- **排查出的深层隐患与修复措施**：
+  1. **下载信号量动态计数被误判为并发变更（运行中误杀任务重大缺陷）**：
+     - **根因**：`engine_rpc.py` 的 `_get_dl_pool` 每次接收新任务时，用 `int(workers or 3) != _dl_pool.sem._value` 检查并发设置是否改变；但 Python `Semaphore._value` 表示当前可用许可数，有任务运行时会自动递减（如 3 减为 2），导致添加后续下载时误判为"并发被修改"，直接新建下载池并强杀此前正在下载中的任务。
+     - **修复**：独立记录配置项 `_dl_pool_workers`，避免受动态许可数干扰；仅当配置值真正改变时才平滑调整信号量，杜绝误杀下载中的任务。
+  2. **下载任务删除后被幽灵事件复活（Zombie Task Resurrection）**：
+     - **根因**：用户删除下载中任务（`dl_remove`）时，虽然进程被杀，但下载工作线程从 `proc.wait()` 退出后会走失败分支触发 `on_task_done` 发送 `failed` 事件；前端收到迟到的 `failed` 事件时，因本地任务已移出而将其作为新任务重新插入列表，导致已删任务莫名复活为"下载失败"。
+     - **修复**：`DownloadPool.remove` 标记 `task.state = "removed"` 并立即释放信号量许可；`DownloadTask.start()` 退出时识别 `removed` 状态直接静默返回；前端 `DownloadPanel` 在收到 `failed`/`done`/`removed` 事件且任务不存在时丢弃事件，彻底阻止幽灵复活。
+  3. **压缩异常抛出导致任务残留与永久锁死**：
+     - **根因**：`engine_rpc.py` 的 `_compress_worker` 在异常处理分支中遗漏了从 `_cmp_running` 字典中移除记录的逻辑；一旦 `compress_video` 抛出异常，该文件将永远留在正在运行字典中，后续任何再次压缩该文件的请求都会被 `dup: true` 永久拦截。
+     - **修复**：使用 `try ... finally:` 块确保 `_cmp_running.pop(rec["id"], None)` 100% 必定执行；并在统计阶段对 `os.path.getsize(path)` 增加 `OSError` 兜底。
+  4. **`_cmd_cmp_stop` 键名回退错配风险**：
+     - **根因**：原 `_cmd_cmp_stop` 取值 `req.get("cmp_id", req.get("id"))`，缺少 `cmp_id` 时会错误回退到 RPC 请求的序号 `id`，且字符串类型的 ID 与字典整数键无法匹配。
+     - **修复**：实现通用类型转换工具 `_safe_int`，对 `task_id`、`cmp_id` 统一安全解析。
+  5. **下载面板已完成列表虚拟滚动偏移错位**：
+     - **根因**：`DownloadPanel.tsx` 针对已完成列表计算 `doneStart` 时直接使用总容器的 `scrollTop`，未扣除上方进行中和等待中任务的高度，导致滚动时已完成任务过早被裁剪或闪烁。
+     - **修复**：平铺安全渲染已完成任务，消除绝对定位偏移与滚动跳跃风险。
+  6. **"所有任务结束后关机" 完整功能闭环实现**：
+     - **根因**：压缩面板底部的自动关机 Toggle 为纯 UI 状态，未接入任何业务逻辑。
+     - **修复**：在 Python 引擎增加 `system_shutdown`（系统执行 `shutdown /s /t 60`）与 `cancel_shutdown`（系统执行 `shutdown /a`）；并在 `CompressPanel` 中接入全任务完成检测状态机：当全部排队和运行任务执行完毕后，自动弹出 60 秒安全倒计时弹窗并呼叫系统关机，用户可在弹窗中随时取消关机。
+- **全链路测试与构建结果**：
+  - Python 核心回归 `test_v2.py`：全部 7 项核心测试通过（`ALL CORE TESTS PASSED`）；
+  - Python GUI 冒烟 `smoke_v2.py`：全部 9 项测试通过（`ALL GUI SMOKE PASSED`）；
+  - Python RPC 管道测试 `tmp/test_cmp_driver.py`：扫描、入队、进度推送、完成压缩全流程验证通过；
+  - 前端：`npm run build`（`tsc && vite build`）零报错构建成功；
+  - 后端：`cargo check` 与 `cargo build` 零报错编译成功，最新可执行文件已同步至根目录 `ui.exe` 与 `ui_lib.dll`。
+
+### 2026-10-11 迭代（全局常驻关机与面板解耦 + 全局底部状态栏重构）
+- **需求与设计意图**：
+  - 用户反馈原逻辑初衷：“所有任务结束后关机是在右下角不动的，不会因面板切换变化”。
+  - 原实现将自动关机开关和收益统计放置在 `CompressPanel` 内部，切换到下载面板时会导致底部状态栏整体消失，且只监控了压缩任务，忽略了下载面板任务。
+- **重构实施**：
+  1. **提升至 `App.tsx` 根级布局（`GlobalFooter`）**：
+     - 将底部栏自 `CompressPanel` 剥离，作为 `<main>` 容器的最后一个子元素常驻固定在窗口底部。
+     - **右下角位置绝对锁定**：无论用户在“下载视频”还是“视频压缩”面板之间如何切换，右下角开关与“所有任务结束后关机”文本位置毫厘不动，开关状态在 App 根状态中保持，绝不因切面板丢失或重置。
+     - **左侧自适应上下文展示**：
+       - 切换至压缩面板时：实时显示“当前任务列表，已完成压缩收益 X.XX GB”（由 `CompressPanel` 经 `onGainChange` 回调实时传递）；
+       - 切换至下载面板时：显示“当前任务列表，已完成下载 N 项”（由 `DownloadPanel` 经 `onDoneCountChange` 实时传递）。
+  2. **跨面板全任务协同关机状态机**：
+     - 活动监听扩充为全队列合并监控：`totalActive = dlAct.running + dlAct.queued + cmpAct.running + cmpAct.queued`；
+     - 启动防护：`hadTasksRef` 守护机制，避免空列表启动时误触关机；
+     - 流水线衔接防抖：任务归零后加入 1.5 秒防抖缓冲，防止“下载完成 → 自动排入压缩队列”中间微秒级空隙误判；
+     - 确认无遗留任务后，向后端发送 `system_shutdown`（Windows `shutdown /s /t 60`），并打开 60 秒倒计时确认窗；
+     - 点击“取消关机”或手动关闭开关立即调用 `cancel_shutdown`（Windows `shutdown /a`）取消系统关机并重置状态。
+- **构建与测试验证**：
+  - 前端：`npm run build`（`tsc && vite build`）零错误构建完成；
+  - 后端：`cargo build` 编译完成，最新 `ui.exe` 与 `ui_lib.dll` 已更新部署到根目录；
+  - 测试：`test_v2.py`、`smoke_v2.py` 与 `tmp/test_cmp_driver.py` 回归测试全部通过。
+
+### 2026-10-11 迭代（方案 A 落地：无边框无标题栏设计 + 顶部胶囊分段导航 + 60-30-10 极简配色重构）
+- **需求与设计背景**：
+  - 用户反馈原左侧面板宽度达 196px，却仅放置了“视频下载”、“视频压缩”两个卡片与底部设置，中间 70% 垂直区域空旷，视觉存在空洞感与重量失衡；
+  - 侧边栏大面积蓝紫渐变过重（`#14185E -> #0C34B8 -> #501A94`），与任务行内的紫色收益色阶打架，产生色彩疲劳；
+  - 用户敲定按**方案 A（顶部胶囊分段导航 Segmented Control）**落地，并明确要求**保留无边框（`decorations: false`）无原生标题栏的纯净桌面设计**。
+- **重构实施**：
+  1. **移除常驻侧边栏，释放 100% 水平视界**：
+     - 完全剥离占用 196px 宽度的 `Sidebar.tsx`；
+     - 主工作区（`main`）由原本被挤压的局部视口扩展为 100% 全宽视口，长文件名、体积、进度条、速度、操作列舒展展开，彻底根治省略号截断与视觉空洞。
+  2. **自绘无边框沉浸式顶栏（44px / h-11）与窗口拖拽隔离**：
+     - 保持 Tauri 原生 `decorations: false` 无边框设计；
+     - **左侧**：微型 24px 品牌 Logo + `eazyVid` 标题；
+     - **居中**：胶囊分段控制器（Segmented Control），浅灰内陷底托（`#F1F5F9`）内置纯白悬浮滑块（`#FFFFFF` + 微投影），集成实时任务运行状态点与排队/进行中数量徽标；
+     - **右侧**：设置按钮（齿轮）与右上角固定的无边框控制组（`WindowControls` 最小化/最大化/关闭，预留 138px）；
+     - **防点击拦截拖拽隔离**：严格汲取历史教训，不在整个 `header` 或按钮父级使用全局 `data-tauri-drag-region`，仅在左右留白区与标题设置专有拖拽锚点，确保按钮点击 100% 触发且窗口双击最大化/拖拽原生丝滑。
+  3. **60-30-10 配色系统升级（`index.css`）**：
+     - **60% 底盘画布**：纯净中性浅冷灰 `--color-surface: #f8fafc` + 白色卡片 `--color-card: #ffffff` + 微发丝边框 `--color-border-soft: #e2e8f0`；
+     - **30% 结构文字**：高级深板岩灰 `--color-text-main: #0f172a`（比纯黑更柔和耐看）+ 次级说明 `--color-text-sub: #64748b`；
+     - **10% 品牌点睛**：蓝紫微渐变（`#005ce6` → `#7b2cbf`）专用于 Logo、进度条流动光泽与收益强调；
+     - **任务行底色雅致微调**：完成态行底色收敛至 8% 薰衣草紫（`rgba(123, 44, 191, 0.08)`），多选选中行优化为清爽浅灰蓝（`#eef2f6`），彻底杜绝浑浊与色彩过载。
+- **构建与测试验证**：
+  - 前端：`npm run build`（`tsc && vite build`）零错误打包完成；
+  - 后端：`cargo build` 编译完成，根目录最新 `ui.exe`（14.85 MB）与 `ui_lib.dll` 已更新同步；
+  - 测试：核心回归 `test_v2.py`、GUI 冒烟 `smoke_v2.py`、压缩驱动 `tmp/test_cmp_driver.py` 全数 PASS。
+
+### 2026-10-11 迭代（品牌深藏青顶栏 + 白底 Logo 衬托 + 压缩模式文案矫正 + 全局右键精准屏蔽）
+- **需求与优化目标**：
+  1. 用户反馈：应用 Logo 带有白色异形底盘（`#FFFFFF` 底色），在纯浅色顶栏上轮廓不明显被融化；需要将顶栏重构为深色，与品牌色和谐统一并把白底 Logo 凸显出来；
+  2. 压缩面板文案纠偏：工具栏上的“默认模式”应明确为“压缩模式”；
+  3. 右键行为规范：屏蔽整个应用在非文本框和非任务行区域的鼠标右键（杜绝 WebView2 默认的刷新/返回/检查菜单弹窗）。
+- **具体实施**：
+  1. **品牌深藏青顶栏（44px / h-11）重构**：
+     - 背景采用品牌深藏青蓝 `bg-[#14185e]` 与极细微暗色底边 `border-b border-black/30`；
+     - Logo 的白底底盘在深蓝衬底上呈现极佳的高对比度，轮廓分明；品牌字样改用纯白高光 `text-white font-display`；
+     - 中间胶囊分段导航器（Segmented Control）适配深色底座：外框为微透明深黑底衬 `bg-black/25 border-white/10`，激活态采用纯白高光滑块 `bg-white text-slate-900 shadow-md`（与 Logo 白底形成优雅呼应），未激活态为透亮浅白 `text-white/70 hover:text-white`；
+     - 右侧设置齿轮与右上角无边框控制组（`WindowControls`）三键文本自适应为 `text-white/75 hover:bg-white/10`，完美融合沉浸。
+  2. **压缩面板文案矫正**：
+     - `CompressPanel.tsx` 顶部工具条中的下拉选择标签文案由“默认模式”正式更名为“压缩模式”。
+  3. **全局右键精准权限屏蔽**：
+     - `CompressPanel.tsx` 与 `DownloadPanel.tsx` 的任务行增加 `data-task-row="true"` 明确语义锚点；
+     - `App.tsx` 挂载 `window.addEventListener("contextmenu")` 全局拦截器：
+       - 白名单：输入框/文本域（`input, textarea, [contenteditable]`）允许系统原生复制/粘贴；
+       - 白名单：任务行（`[data-task-row]`）放行并触发组件自绘的弹出菜单（`ContextMenu`）；
+       - 白名单：已弹出的自绘菜单自身（`[data-ctx-menu]`）；
+       - 其余一切区域（标题栏、空白区、工具条、状态栏、设置等）一律调用 `e.preventDefault()` 彻底屏蔽 WebView2 浏览器默认菜单。
+- **构建与测试验证**：
+  - 前端：`npm run build` 零错误打包通过；
+  - 后端：`cargo build` 编译完成，根目录 `ui.exe` 与 `ui_lib.dll` 已更新部署；
+  - 测试：全部核心单测、GUI 冒烟测试及驱动测试 100% 通过。
+
+### 2026-10-11 迭代（国际化多语言体系落地：美式英语 + 简体中文 + 跟随系统与兜底回退）
+- **需求与设计背景**：
+  1. 设置面板新增“界面语言”选择，下拉菜单提供“跟随系统”、“简体中文”和“English”；
+  2. 默认设置为“跟随系统”；系统语言未命中中文时，英文（`en`）兜底回退；
+  3. 打造一套专业、自然的地道美式英语（American English）UI 交互文案，涵盖所有提示、操作、状态、右键菜单与弹窗。
+- **具体实施**：
+  1. **零外部依赖、响应式类型安全 i18n 模块（`ui/src/i18n.ts`）**：
+     - 语言设定类型定义为 `LangSetting = "system" | "zh-CN" | "en"`，解析类型为 `ResolvedLang = "zh-CN" | "en"`；
+     - `resolveLang(setting)`：若设置选定为 `zh-CN` 或 `en` 则精准直达；若设置为 `system` 则读取浏览器/WebView `navigator.language`，正则 `/^zh\b/i` 匹配中文（覆盖 zh-CN, zh-HK, zh-TW 等全部中文分支），其他所有非中文语言环境一律以英文 `en` 兜底；
+     - 构建 `I18nProvider` 与 `useI18n()` 钩子，支持即时响应式切换界面语言，无需重新加载或重启应用；支持 `{key}` 动态变量插值。
+  2. **地道美式英语（American English UX Copy）词典**：
+     - 顶栏与窗口：Downloader / Compressor / Settings / Minimize / Restore / Close 等标准控件用语；
+     - 设置面板：Display Language, System Default, Download Directory, Compression Output, Save to source file directory, Concurrent Downloads, Concurrent Compressions 等专业设置文案；
+     - 压缩面板与模式：Presets（Balanced / Quality Priority / Fast / AV1 Extreme）、Start Compression、Clear Completed、ETA、Elapsed、Re-queue、Move to Top、Show in Folder 等原生交互术语；动态耗时格式化（英文 `Xm Ys`，中文 `X分Y秒`）；
+     - 下载面板：Analyze URL、Playable video formats detected、Download Queue、Parsing stream、Merging audio tracks、Remove & Clean Up 等清晰易懂的表达；
+     - 全局底部常驻栏与自动关机：Current queue: X.XX GB saved via compression、Shut down when all tasks complete、All Tasks Completed；
+     - 系统通知与 ffmpeg 更新提示弹窗全量双语支持。
+  3. **组件全量国际化接入**：
+     - `SettingsDialog.tsx`：顶部首选增加界面语言切换器，选项与配置描述全量响应 `useI18n()`，持久化存入 `localStorage`（`eazyvid.settings.v1`）；
+     - `App.tsx`：根级包裹 `<I18nProvider>`，顶栏导航胶囊、设置提示、ffmpeg 更新横幅及弹窗、托盘退出警告弹窗、自动关机倒计时弹窗全量适配；
+     - `WindowControls.tsx`：自绘窗口最小化、最大化、还原、关闭按钮的 `title` 和 `aria-label` 全量国际化；
+     - `CompressPanel.tsx`：工具栏、压缩模式下拉（`getCompressModes(t)` 动态生成）、任务行状态文案、操作按钮提示符、右键菜单及两类移出确认弹窗全量国际化；
+     - `DownloadPanel.tsx`：地址探测栏、可用格式列表表头、下载池状态、操作按钮提示符、右键菜单、删除子菜单及批量清理弹窗全量国际化。
+- **构建与测试验证**：
+  - 前端：`npm run build`（`tsc && vite build`）零报错编译，36 个模块正常产出 `dist/`；
+  - 后端：`cargo build` 零报错编译完成，最新的 `ui.exe`（14.85 MB）已同步至应用根目录；
+  - 自动化回归测试：`test_v2.py`、`smoke_v2.py`、`tmp/test_cmp_driver.py` 全数一次性 100% 通过。
+
+### 2026-10-11 迭代（全局字号按级放大两号与控件高精度防溢出优化）
+- **需求与优化目标**：
+  1. 用户反馈界面整体字体偏小，需要将所有主要字号增大两个号（通常为 +2px 或两个 Tailwind 字阶，如 12px→14px、13px→15px、14px→16px、15px→17px 等）；
+  2. 匹配相应控件高度、内边距与网格分列，杜绝文字截断、换行坍塌或纵向溢出；
+  3. 用户针对注释文字提出专门要求：注释/次级提示/补充说明的字号无需增大过多（保持在 12px 左右或精细 line-height），重点避免部分可能产生多余折行或溢出的长注释发生破损。
+- **具体实施**：
+  1. **全局基础组件体系升级（`ui/src/components/ui.tsx` & `ui/src/index.css`）**：
+     - `Button`：小按钮 `sm` 提升为 `text-[13px] px-3 h-8`，标准按钮 `md` 提升为 `text-[14px] px-3.5 h-9`；
+     - `Select`：触发器高度提升为 `h-8 px-2.5 text-[14px]`，下拉浮层选项行高与间距放大为 `px-2.5 py-1.5 text-[14px]`，勾选标微调为 `text-[11px]`；
+     - `ContextMenu`：右键菜单项提升为 `text-[14px] px-3.5 h-8.5`；
+     - `Dialog`：标题提升为 `text-[16px] font-semibold`，关闭按钮扩大为 `w-8 h-8`，对话框正文采用 `text-[15px]`，宽度微扩给按钮留足安全呼吸空间；
+     - `FieldRow`：行高提升至 `min-h-10`，标签提升为 `w-[210px] text-[15px]`，右侧简短提示温和调至 `text-[12px]`；
+     - Tooltip（`.ez-tip`）：字号调至 `13px`，内边距 `5px 11px`，清晰易读。
+  2. **顶栏无边框与常驻栏协同（`App.tsx` & `WindowControls.tsx`）**：
+     - 自绘深色标题栏与右上角控制组统一提升至 `h-12`（48px）；
+     - 白底 Logo 放大至 `26px`，品牌名文本升级为 `text-[17px]`；
+     - 胶囊分段导航器（Segmented Control）按钮升级为 `px-4 py-1.5 text-[15px]`，任务数徽标适度调整为 `text-[12px] px-2 py-0.5`，设置图标放大至 `w-8.5 h-8.5`；
+     - 全局底部固定常驻栏（`GlobalFooter`）提升至 `h-12`，统计收益、下载计数及关机开关文字全量调整为 `text-[14px]`；
+     - ffmpeg 稳定版更新横幅升级至 `text-[13.5px]`，操作按钮升级为 `text-[13px] px-3 py-1.5`；所有系统确认与倒计时弹窗正文升级为 `text-[15px]`。
+  3. **压缩面板高精度适配（`CompressPanel.tsx`）**：
+     - 行高常数 `ROW_H` 从 58px 调整为 64px，任务行容器高度从 `h-[52px]` 提升为 `h-[58px]`，拖拽占位符同步调整为 `58px`；
+     - 任务行分列网格调整为 `grid-cols-[1fr_95px_1fr_140px_100px]`：
+       - 文件名升级为 `text-[15px]`，状态次级注释克制保持 `text-[12px]`；
+       - 原文件大小与压缩后大小升级为 `text-[14px] tabular-nums`；
+       - 压缩百分比升级为 `text-[14px]`，当前进度与预计剩余时间次级注释设为 `text-[12px]`；
+       - 压缩模式下拉宽度增至 `140px`，贴右操作组宽度拓宽至 `100px`，完全消除中英文切换时的省略号截断；
+     - 顶部工具栏“压缩模式”选择框拓至 `w-[145px]`，列表表头高度调为 `h-6`，标题字体升至 `text-[14px]`，注释与提示文案保持 `text-[12px]`，空状态提示升至 `text-[14px]`。
+  4. **下载面板全控件适配（`DownloadPanel.tsx`）**：
+     - 地址栏输入框高度从 `h-9` 扩至 `h-10 text-[15px]`，粘贴按钮扩大至 `w-8 h-8`，探测按钮升级为 `h-10 px-4 text-[14px]`；
+     - 可用视频流格式列表：表头升级为 `h-9 text-[12px]`，格式行高度升为 `h-12`，分列调整为 `grid-cols-[100px_75px_85px_105px_1fr_80px]`，分辨率升级为 `text-[15px]`，格式/编码/体积升级为 `text-[14px]`，下载按钮升级为 `sm`（`text-[13px] h-8`）；
+     - 下载池任务行：`DL_ROW_H` 调至 68px，行容器高度提升为 `h-[62px]`，网格列宽调整为 `grid-cols-[1fr_125px_75px_90px_130px_120px]`，文件名升级为 `text-[15px]`，已下体积/进度百分比/实时网速全量升为 `text-[14px] tabular-nums`，行内压缩模式下拉框自适应 `h-8 text-[14px]`；
+     - 队列标题栏高度增为 `h-6`，标题文字升为 `text-[14px]`，多选/拖拽提示文案克制保持 `text-[12px]`。
+  5. **设置弹窗微调（`SettingsDialog.tsx`）**：
+     - 弹窗宽度扩至 `600px`，数字微调器按钮升至 `w-7 h-7 text-[14px]`，输入框拓至 `w-12 h-7 text-[14px]`；
+     - 目录显示框升至 `h-8 px-3 text-[14px]`，浏览文件夹按钮拓至 `w-8 h-8`；
+     - 并发数右侧提示文案保持 `text-[12px]` 并设为 `leading-snug flex-1`，避免在调整字号后出现多余折行或挤压排版。
+- **构建与测试验证**：
+  - 前端：`npm run build`（`tsc && vite build`）零报错编译，36 个模块产出正常；
+  - 后端：`cargo build --release` 编译完成，生成的高性能 `ui.exe`（4.82 MB）已安全替换至根目录；
+  - 自动化回归测试：`test_v2.py`、`smoke_v2.py`、`tmp/test_cmp_driver.py` 全数 100% 通过。

@@ -151,11 +151,18 @@ export function useDragSort<T extends { id: string }>(
   useEffect(() => {
     const onMove = (e: MouseEvent) => handleMove(e);
     const onUp = (e: MouseEvent) => handleUp(e);
+    /* 窗口失焦（拖拽中弹窗/Alt-Tab 等）→ 终止拖拽，防止浮行/占位永久卡住盖住按钮 */
+    const onBlur = () => {
+      if (dragIdRef.current || pressRef.current) endDrag();
+      pressRef.current = null;
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onBlur);
     };
   }, [handleMove, handleUp]);
 

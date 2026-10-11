@@ -1017,8 +1017,9 @@ class DownloadTask:
             elif line.startswith("ERROR"):
                 self.pool.log(f"下载错误：{line}")
         self.proc.wait()
-        if self.state == "paused":
-            self.pool.log("已暂停，断点保留，可点「继续」续传")
+        if self.state in ("paused", "removed"):
+            if self.state == "paused":
+                self.pool.log("已暂停，断点保留，可点「继续」续传")
             return
         ok = self.proc.returncode == 0
         out = None
@@ -1110,12 +1111,15 @@ class DownloadPool:
         self.on_update(("progress", task))
 
     def remove(self, task):
+        was_running = task.state in ("downloading", "parsing")
+        task.state = "removed"
         if task in self.tasks:
             self.tasks.remove(task)
         _kill_proc_tree(task.proc)
-        if task.state != "done":
-            if task.tmpdir and os.path.isdir(task.tmpdir):
-                shutil.rmtree(task.tmpdir, ignore_errors=True)
+        if was_running:
+            self.sem.release()
+        if task.tmpdir and os.path.isdir(task.tmpdir):
+            shutil.rmtree(task.tmpdir, ignore_errors=True)
         ui = task.ui
         task.ui = None
         if ui:
@@ -1289,6 +1293,13 @@ def compress_video(in_path, mode_name, log_cb, progress_cb=None, out_dir=None, p
                                     creationflags=NO_WINDOW | 0x00004000)
             if proc_holder is not None:
                 proc_holder["proc"] = proc
+                # 竞态保险：Popen 前收到 cmp_stop（proc 尚为 None 未杀）时，此处立即补杀
+                if proc_holder.get("stopped"):
+                    try:
+                        _kill_proc_tree(proc)
+                    except Exception:
+                        pass
+                    proc_holder["proc"] = None
             for raw in iter(proc.stdout.readline, b""):
                 line = raw.decode("utf-8", "replace").strip()
                 if line.startswith("out_time_us="):

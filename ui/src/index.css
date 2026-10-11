@@ -18,12 +18,12 @@
   --color-violet-brand: #7b2cbf;
   --color-violet-soft: #501a94;
 
-  /* 中性色（Soft UI 浅色模式） */
-  --color-surface: #f7f8fc;
+  /* 中性色（60-30-10 极简浅色模式） */
+  --color-surface: #f8fafc;
   --color-card: #ffffff;
-  --color-border-soft: #e5e7eb;
+  --color-border-soft: #e2e8f0;
   --color-border-brand: #e0e7ff;
-  --color-text-main: #1e293b;
+  --color-text-main: #0f172a;
   --color-text-sub: #64748b;
 
   /* 状态色 */
@@ -31,11 +31,11 @@
   --color-warn: #d97706;
   --color-danger: #dc2626;
 
-  /* 完成态行底色（薰衣草紫 30%）、终止/失败（琥珀 15%） */
-  --color-lavender-row: rgba(123, 44, 191, 0.3);
-  --color-amber-row: rgba(199, 138, 42, 0.15);
-  /* 多选选中行：比默认白色略深的灰蓝 */
-  --color-selected-row: #e8ebf0;
+  /* 完成态行底色（雅致薰衣草紫 8%）、终止/失败（淡琥珀 8%） */
+  --color-lavender-row: rgba(123, 44, 191, 0.08);
+  --color-amber-row: rgba(199, 138, 42, 0.08);
+  /* 多选选中行：清爽浅灰蓝 */
+  --color-selected-row: #eef2f6;
 
   /* 字体 */
   --font-display: "Outfit", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
@@ -89,8 +89,8 @@ input, textarea {
   z-index: 100;
   background: #14185e;
   color: #fff;
-  font-size: 12px;
-  padding: 5px 10px;
+  font-size: 13px;
+  padding: 5px 11px;
   border-radius: 6px;
   pointer-events: none;
   box-shadow: 0 4px 12px rgba(20, 24, 94, 0.25);

@@ -82,6 +82,16 @@ impl Engine {
     }
 
     pub fn send(app: &AppHandle, line: &str) -> Result<(), String> {
+        /* 落盘探针：前端每个命令（含 diag）是否真正到达 Rust → 判断 onClick 是否触发 */
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(r"D:\Documents\eazyVid\tmp\engine_ui_commands.txt")
+            .and_then(|mut f| {
+                f.write_all(format!("{ms}\t{line}\n").as_bytes())
+            });
         let st: State<'_, Engine> = app.state();
         let mut guard = st.stdin.lock().unwrap();
         let stdin = guard.as_mut().ok_or("引擎未启动")?;

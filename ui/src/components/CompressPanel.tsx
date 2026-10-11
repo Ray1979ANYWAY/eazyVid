@@ -1,12 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { Button, IconBtn, Icon, Select, Toggle, fmtSize, fmtETA, useTip, ContextMenu, type CtxItem } from "./ui";
-import { COMPRESS_MODES, MODE_TINTS, type CmpTask } from "../mock";
+import { Button, IconBtn, Icon, Select, Dialog, fmtSize, fmtETA, useTip, ContextMenu, type CtxItem } from "./ui";
+import { MODE_TINTS, getCompressModes, type CmpTask } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { diag } from "../diag";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useI18n, type ResolvedLang } from "../i18n";
 
 /** 打开文件/目录：调用前后 + 错误全部落盘探针（定位"点了没动作"） */
 const tryOpen = (p: string, kind: string) => {
@@ -33,12 +34,15 @@ function outPathOf(t: CmpTask, outSame: boolean, outDir: string): string {
   return `${dir}${sep}${file}_compressed.mp4`;
 }
 
-const ROW_H = 58; // 52px 行高 + 6px 间距
+const ROW_H = 64; // 58px 行高 + 6px 间距
 
-function fmtElapsed(sec: number) {
+function fmtElapsed(sec: number, lang: ResolvedLang = "zh-CN") {
   const s = Math.round(sec);
   const m = Math.floor(s / 60);
   const r = s % 60;
+  if (lang === "en") {
+    return m > 0 ? `${m}m ${r}s` : `${r}s`;
+  }
   return m > 0 ? `${m}分${r}秒` : `${r}秒`;
 }
 
@@ -76,9 +80,11 @@ function CmpRow({
   };
 }) {
   const show = useTip();
+  const { t: tr } = useI18n();
   const isRunning = t.status === "running";
   const pct = t.pct ?? 0;
   const draggable = t.status === "queued";
+  const compressModes = useMemo(() => getCompressModes(tr), [tr]);
 
   const baseBg = isRunning
     ? "bg-white"
@@ -90,12 +96,12 @@ function CmpRow({
   const bg = selected ? "bg-selected-row" : baseBg;
 
   const statusText: Record<string, string> = {
-    running: "压缩中",
-    queued: "排队中",
-    done: "已完成",
-    stopped: "已终止",
-    skipped: "收益小，已跳过",
-    failed: "压缩失败",
+    running: tr("cmp.status.running"),
+    queued: tr("cmp.status.queued"),
+    done: tr("cmp.status.done"),
+    stopped: tr("cmp.status.stopped"),
+    skipped: tr("cmp.status.skipped"),
+    failed: tr("cmp.status.failed"),
   };
 
   /* 行内容（进度条层 + 信息 grid），浮行与占位共用 */
@@ -110,17 +116,17 @@ function CmpRow({
       )}
 
       <div
-        className="relative grid grid-cols-[1fr_90px_1fr_130px_96px] items-center h-[52px] px-3 gap-2"
+        className="relative grid grid-cols-[1fr_95px_1fr_140px_100px] items-center h-[58px] px-3 gap-2"
         onContextMenu={(e) => onCtx(e, t)}
       >
         {/* 状态 + 文件名 */}
         <div className="min-w-0" onMouseEnter={(e) => show(e.currentTarget, t.name)}>
-          <div className="text-[13px] text-text-main truncate">{t.name}</div>
-          <div className="text-[11px] text-text-sub mt-0.5">{statusText[t.status]}</div>
+          <div className="text-[15px] text-text-main truncate">{t.name}</div>
+          <div className="text-[12px] text-text-sub mt-0.5">{statusText[t.status]}</div>
         </div>
 
         {/* 原文件大小 */}
-        <div className="text-[12px] text-text-sub tabular-nums">
+        <div className="text-[14px] text-text-sub tabular-nums">
           {t.orig > 0 ? fmtSize(t.orig) : "—"}
         </div>
 
@@ -129,56 +135,86 @@ function CmpRow({
           {isRunning && (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-[12px] font-semibold text-brand-700 tabular-nums">{Math.round(pct)}%</span>
-                <span className="text-[11px] text-text-sub tabular-nums">
+                <span className="text-[14px] font-semibold text-brand-700 tabular-nums">{Math.round(pct)}%</span>
+                <span className="text-[12px] text-text-sub tabular-nums">
                   {t.pos} / {t.dur}
                 </span>
               </div>
-              <div className="text-[11px] text-text-sub mt-0.5 tabular-nums">预计剩余 {fmtETA(t.etaSec ?? 0)}</div>
+              <div className="text-[12px] text-text-sub mt-0.5 tabular-nums">{tr("cmp.eta", { eta: fmtETA(t.etaSec ?? 0) })}</div>
             </>
           )}
-          {t.status === "queued" && <div className="text-[12px] text-text-sub">等待空闲线程…</div>}
+          {t.status === "queued" && <div className="text-[14px] text-text-sub">{tr("cmp.waitingWorker")}</div>}
           {t.status === "done" && t.outSize !== undefined && (
             <>
-              <div className="text-[12px] text-text-main tabular-nums">
-                {fmtSize(t.outSize)} <span className="text-ok text-[11px]">↓{t.ratio}%</span>
+              <div className="text-[14px] text-text-main tabular-nums">
+                {fmtSize(t.outSize)} <span className="text-ok text-[12px]">↓{t.ratio}%</span>
               </div>
-              <div className="text-[11px] text-text-sub mt-0.5">用时 {t.elapsed}</div>
+              <div className="text-[12px] text-text-sub mt-0.5">{tr("cmp.elapsed", { time: t.elapsed ?? "" })}</div>
             </>
           )}
           {(t.status === "stopped" || t.status === "skipped") && (
-            <div className="text-[12px] text-warn">{t.status === "skipped" ? "预估压缩收益不足，已终止" : "已手动终止"}</div>
+            <div className="text-[14px] text-warn">{t.status === "skipped" ? tr("cmp.skippedMsg") : tr("cmp.stoppedMsg")}</div>
           )}
-          {t.status === "failed" && <div className="text-[12px] text-warn">压缩失败，请查看日志</div>}
+          {t.status === "failed" && <div className="text-[14px] text-warn">{tr("cmp.statusFailed")}</div>}
         </div>
 
         {/* 模式（运行中变灰；已完成锁定不可改——已压完的模式改也无意义） */}
         <div>
           {t.status === "queued" || t.status === "stopped" || t.status === "skipped" || t.status === "failed" ? (
-            <Select value={t.mode} onChange={(m) => onMode(m)} options={COMPRESS_MODES} tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
+            <Select value={t.mode} onChange={(m) => onMode(m)} options={compressModes} tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
           ) : (
-            <Select value={t.mode} onChange={() => {}} options={COMPRESS_MODES} disabled tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
+            <Select value={t.mode} onChange={() => {}} options={compressModes} disabled tint={MODE_TINTS[t.mode] ?? ""} className="w-full" />
           )}
         </div>
 
         {/* 操作（贴最右） */}
         <div className="flex items-center justify-end gap-1">
           {isRunning && (
-            <IconBtn tip="终止压缩（无法从断点继续）" onClick={() => onStop(t)} className="hover:text-danger hover:bg-danger/10">
+            <IconBtn
+              tip={tr("cmp.tip.stop")}
+              data-action="stop"
+              onClick={(e) => {
+                e.stopPropagation();
+                onStop(t);
+              }}
+              className="hover:text-danger hover:bg-danger/10"
+            >
               <Icon d="M7 7h10v10H7z" size={18} />
             </IconBtn>
           )}
           {(t.status === "stopped" || t.status === "failed") && (
-            <IconBtn tip="重新压缩（排到队尾）" onClick={() => onRestart(t)}>
+            <IconBtn
+              tip={tr("cmp.tip.restart")}
+              data-action="restart"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestart(t);
+              }}
+            >
               <Icon d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 0 0-14.9-2M4 15a8 8 0 0 0 14.9 2" size={18} />
             </IconBtn>
           )}
           {t.status === "queued" && (
-            <IconBtn tip="置顶" onClick={() => onTop(t)}>
+            <IconBtn
+              tip={tr("cmp.tip.top")}
+              data-action="top"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTop(t);
+              }}
+            >
               <Icon d="M12 19V5m0 0-6 6m6-6 6 6" size={18} />
             </IconBtn>
           )}
-          <IconBtn tip="删除（仅移出列表）" onClick={() => onDelete(t)} className="hover:text-danger hover:bg-danger/10">
+          <IconBtn
+            tip={tr("cmp.tip.delete")}
+            data-action="delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(t);
+            }}
+            className="hover:text-danger hover:bg-danger/10"
+          >
             <Icon d="M3 6h18M8 6V4h8v2m1 0 1 14H6L5 6m5 5v6m4-6v6" size={18} />
           </IconBtn>
         </div>
@@ -192,10 +228,10 @@ function CmpRow({
       <>
         <div
           className="relative mb-1.5 rounded-lg border-2 border-dashed border-brand-300/60 bg-brand-50/40"
-          style={{ height: 52 }}
+          style={{ height: 58 }}
         />
         <div
-          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white"
+          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white pointer-events-none"
           style={{ top: drag.draggingTop, left: drag.draggingLeft, width: drag.draggingWidth }}
         >
           {inner}
@@ -206,6 +242,7 @@ function CmpRow({
 
   return (
     <div
+      data-task-row="true"
       onMouseDown={draggable ? drag?.onMouseDown : undefined}
       onClick={
         onRowClick
@@ -242,7 +279,8 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
   overwrite?: boolean;
   cover?: boolean;
   coverSec?: number;
-  onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
+  onActivityChange?: (busy: boolean, fail: boolean, running: number, queued: number) => void;
+  onGainChange?: (gain: number) => void;
   /* 当前是否为可见面板：隐藏面板不响应 Delete/Backspace（多选删除只作用于当前面板） */
   active?: boolean;
 }>(function CompressPanel(
@@ -254,60 +292,80 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
     cover = false,
     coverSec = 5,
     onActivityChange,
+    onGainChange,
     active = true,
   },
   ref,
 ) {
   const [tasks, setTasks] = useState<CmpTask[]>([]);
   const [defMode, setDefMode] = useState("default");
-  const [shutdown, setShutdown] = useState(false);
   const [fileOver, setFileOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ctx, setCtx] = useState<{ x: number; y: number; t: CmpTask } | null>(null);
+  /* 终止确认：行内停止按钮（stop：终止保留行）或 右键移出运行中任务（remove：终止并移出）。
+     两者都会删除未压缩完的中间输出（无法从断点继续） */
+  const [confirmStop, setConfirmStop] = useState<{ t: CmpTask; action: "stop" | "remove" } | null>(null);
   const engine = useEngine();
   const show = useTip();
+  const { t, lang } = useI18n();
+  const compressModes = useMemo(() => getCompressModes(t), [t]);
 
-  /* 行右键：完成态 = 打开文件 + 打开输出目录；其余 = 打开输出目录 */
+  /* 行右键：右键行不在选中集合内 → 重置选中为该行（菜单按右键行提供单选选择）；
+     右键行在选中集合内 → 保持多选，提供批量移出 */
   const openCtx = (e: React.MouseEvent, t: CmpTask) => {
     diag(`CTX open name=${t.name} btn=${e.button} type=${e.type}`);
     e.preventDefault();
     e.stopPropagation(); // 阻止冒泡到 window（否则同一次右键会把刚渲染的菜单秒关）
+    if (!sel.has(t.id)) {
+      setSel(new Set([t.id]));
+      setAnchor(t.id);
+    }
     setCtx({ x: e.clientX, y: e.clientY, t });
     diag(`CTX set x=${e.clientX} y=${e.clientY}`);
   };
   const ctxItems = (): CtxItem[] => {
     if (!ctx) return [];
-    const { t } = ctx;
+    const { t: task } = ctx;
     /* 多选（右键行在选中集合内）：只提供批量移出——不提供打开文件/目录，
        不同文件所属目录不同，多选打开会弹出一堆资源管理器 */
-    if (sel.size > 1 && sel.has(t.id)) {
-      return [{ label: `移出队列（${sel.size} 项）`, onClick: removeSelected }];
+    if (sel.size > 1 && sel.has(task.id)) {
+      return [{ label: t("cmp.removeMulti", { count: sel.size }), onClick: removeSelected }];
     }
-    const out = outPathOf(t, outSame, outDir);
+    /* 单选：已完成 = 打开文件 + 打开输出目录 + 移出队列；非完成（含压缩中）= 打开输出目录 + 移出队列
+       （压缩中移出 = 终止并移出，走确认警告：删未压缩完产物） */
+    const out = outPathOf(task, outSame, outDir);
     const items: CtxItem[] = [];
-    if (t.status === "done") {
-      items.push({ label: "打开文件", onClick: () => out && tryOpen(out, "cmp-open") });
+    if (task.status === "done") {
+      items.push({ label: t("cmp.openFile"), onClick: () => out && tryOpen(out, "cmp-open") });
     }
     items.push({
-      label: "打开输出目录",
+      label: t("cmp.openDir"),
       onClick: () => {
         if (!out) return;
         const dir = out.slice(0, Math.max(out.lastIndexOf("\\"), out.lastIndexOf("/")));
         // 完成态：定位输出文件；未完成：打开输出目录文件夹（输出文件还不存在，reveal 会 FAIL）
-        if (t.status === "done") tryReveal(out, "cmp-reveal");
+        if (task.status === "done") tryReveal(out, "cmp-reveal");
         else tryOpen(dir, "cmp-open-dir");
+      },
+    });
+    items.push({
+      label: t("cmp.removeFromList"),
+      onClick: () => {
+        if (task.status === "running") setConfirmStop({ t: task, action: "remove" });
+        else remove(task.id);
       },
     });
     return items;
   };
 
-  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，退出确认用） */
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，queued=等待数） */
   const actRef = useRef(onActivityChange);
   actRef.current = onActivityChange;
   useEffect(() => {
     const running = tasks.filter((t) => t.status === "running").length;
+    const queued = tasks.filter((t) => t.status === "queued").length;
     const fail = tasks.some((t) => t.status === "failed" || t.status === "skipped");
-    actRef.current?.(running > 0, fail, running);
+    actRef.current?.(running > 0, fail, running, queued);
   }, [tasks]);
 
   const move = (id: string, fn: (t: CmpTask) => CmpTask) =>
@@ -326,19 +384,37 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
 
   const remove = (id: string) => {
     /* 删除运行中任务：先杀引擎进程（含删半成品输出），再移出列表；
-       已完成/排队等其余状态仅移出列表（保留输出文件） */
+       已完成/排队等其余状态仅移出列表（保留输出文件）。
+       只要 cmpId 已绑定就发 cmp_stop——UI 状态与实际进程错位（如误显示排队）时也能兜底杀进程 */
+    submittingRef.current.delete(id); // 若还在"提交启动中"，释放 submitting 槽
     const t = tasks.find((x) => x.id === id);
-    if (t && t.status === "running" && t.cmpId != null) {
+    diag(`REMOVE id=${id} status=${t?.status} cmpId=${t?.cmpId ?? "null"}`);
+    if (t && t.cmpId != null) {
       engine.call("cmp_stop", { cmp_id: t.cmpId });
     }
     setTasks((prev) => prev.filter((x) => x.id !== id));
   };
 
+  /* 删除：压缩中（有半成品产物）→ 弹终止警告（删中间输出后移出）；其余 → 直接移出列表（保留输出文件） */
+  const onDeleteClick = (t: CmpTask) => {
+    diag(`DELBTN id=${t.id} status=${t.status} cmpId=${t.cmpId ?? "null"}`);
+    if (t.status === "running") setConfirmStop({ t, action: "remove" });
+    else remove(t.id);
+  };
+
   const appendTasks = (items: { path: string; name: string; mode?: string }[]) =>
     setTasks((prev) => {
-      /* 同一路径不重复入列（拖拽/多选可能重复触发） */
+      /* 过滤 + 去重：
+         1) 压缩输出文件（xxx_compressed.mp4）与源文件同目录，扫描/拖入时会被当新任务——排除，避免输出被重复压缩（曾致两个 ffmpeg 同时压同一文件）
+         2) 同一路径不重复入列：跨批（existing 含旧任务）与同批（seen）都去重 */
       const existing = new Set(prev.map((t) => t.path));
-      const fresh = items.filter((it) => it.path && !existing.has(it.path));
+      const seen = new Set<string>();
+      const fresh = items.filter((it) => {
+        if (!it.path || existing.has(it.path) || seen.has(it.path)) return false;
+        if (/_compressed\.mp4$/i.test(it.path)) return false;
+        seen.add(it.path);
+        return true;
+      });
       return [
         ...prev,
         ...fresh.map((it, i) => ({
@@ -470,12 +546,19 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
   };
 
   /* 批量移出：压缩面板只移出列表（输出文件保留），运行中除外 */
+  /* 批量移出确认：选中的压缩中任务将被终止并删除中间输出（无法断点续压） */
+  const [multiStop, setMultiStop] = useState<{ ids: string[]; n: number } | null>(null);
+
   const removeSelected = () => {
-    const ids = [...sel].filter((id) => {
-      const x = tasks.find((t) => t.id === id);
-      return x && x.status !== "running";
-    });
+    const ids = [...sel];
     if (ids.length === 0) return;
+    diag(`MULTIREMOVE ids=${ids.join(",")}`);
+    const running = ids.filter((id) => tasks.find((t) => t.id === id)?.status === "running");
+    if (running.length > 0) {
+      setMultiStop({ ids, n: ids.length }); // 含压缩中任务：弹警告，确认后逐个终止+移出
+      return;
+    }
+    ids.forEach((id) => submittingRef.current.delete(id));
     setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
     setSel(new Set());
   };
@@ -518,69 +601,95 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
       .reduce((acc, t) => acc + t.orig * (1 - (t.ratio ?? 0) / 100), 0);
   }, [tasks]);
 
+  const gainRef = useRef(onGainChange);
+  gainRef.current = onGainChange;
+  useEffect(() => {
+    gainRef.current?.(gain);
+  }, [gain]);
+
   const runningCount = runningTasks.length;
 
   /* 已点过"开始压缩"（对齐 TK 版 paused 取反）：初始只排队，点开始才启动；之后任务结束自动补位 */
   const [started, setStarted] = useState(false);
+  /* 已提交 cmp_add 但尚未收到 cmp_id（状态还没变 running）的任务 id：
+     防止进度事件触发 effect 时对同一批 queued 重复补位（曾致并发失控：9 个 ffmpeg 同时跑） */
+  const submittingRef = useRef<Set<string>>(new Set());
+
+  /* 启动单个任务：先占 submitting 槽（防重复），收到 cmp_id 后置 running */
+  const launchTask = (t: CmpTask, ts: number, i: number) => {
+    /* 入口防重：同一任务已在提交中（startCompress 与自动补位 effect 竞态会同时选中）→ 直接跳过，
+       从源头消除重复 cmp_add（此前曾致引擎 dup 响应把已启动行误删） */
+    if (submittingRef.current.has(t.id)) return;
+    submittingRef.current.add(t.id);
+    const doOverwrite = overwrite && outSame; // 覆盖仅"与原文件同目录"可用
+    engine
+      .call("cmp_add", {
+        path: t.path,
+        mode: t.mode,
+        out_dir: outSame ? null : outDir || null,
+        cover_sec: doOverwrite && cover ? coverSec : null,
+        overwrite: doOverwrite,
+        limit: compressWorkers, // 引擎并发硬闸门：达上限拒绝启动（防 UI 竞态超发）
+      })
+      .then((r) => {
+        const rr = r as { cmp_id?: number; dup?: boolean; limit?: boolean };
+        if (rr.limit) {
+          // 并发已满：保持 queued，交给自动补位 effect 在有空闲线程时启动
+          return;
+        }
+        if (rr.dup) {
+          // 引擎已有同路径任务在压：仅移除未绑定的重复行；已启动（有 cmpId）的行保留——
+          // 竞态下同一任务被补位 effect 重复选中时，不能把正常运行的行删掉
+          setTasks((prev) => prev.filter((x) => x.id !== t.id || x.cmpId != null));
+          return;
+        }
+        const cid = rr.cmp_id;
+        setTasks((prev) =>
+          prev.map((x) => (x.id === t.id ? { ...x, cmpId: cid, status: "running", pct: 0, startTs: ts + i } : x)),
+        );
+      })
+      .catch(() => {})
+      .finally(() => {
+        submittingRef.current.delete(t.id);
+      });
+  };
 
   /* 开始压缩：按空闲线程数启动队首任务（每个任务独立 cmp_add，绑 cmpId） */
   const startCompress = () => {
     setStarted(true);
-    const free = Math.max(0, compressWorkers - runningCount);
-    const targets = queuedTasks.slice(0, free);
+    const idle = tasks.filter((t) => t.status === "running" || submittingRef.current.has(t.id)).length;
+    const free = Math.max(0, compressWorkers - idle);
+    const targets = tasks.filter((t) => t.status === "queued" && !submittingRef.current.has(t.id)).slice(0, free);
     if (targets.length === 0) return;
     const ts = Date.now();
-    targets.forEach((t, i) => {
-      const doOverwrite = overwrite && outSame; // 覆盖仅"与原文件同目录"可用
-      engine
-        .call("cmp_add", {
-          path: t.path,
-          mode: t.mode,
-          out_dir: outSame ? null : outDir || null,
-          cover_sec: doOverwrite && cover ? coverSec : null,
-          overwrite: doOverwrite,
-        })
-        .then((r) => {
-          const cid = (r as { cmp_id?: number }).cmp_id;
-          setTasks((prev) =>
-            prev.map((x) => (x.id === t.id ? { ...x, cmpId: cid, status: "running", pct: 0, startTs: ts + i } : x)),
-          );
-        });
-    });
+    targets.forEach((t, i) => launchTask(t, ts, i));
   };
 
   /* 自动补位：已点过"开始压缩"后，任一任务结束（完成/失败/跳过/终止）有空闲线程就自动启动队首任务。
-     未点过开始（started=false）时不自动启动——添加/拖入任务只排队（对齐 TK 版 paused 语义） */
+     未点过开始（started=false）时不自动启动——添加/拖入任务只排队（对齐 TK 版 paused 语义）。
+     submitting 槽计入占用：提交中的任务（状态未变 running）不重复补位 */
   useEffect(() => {
     if (!started) return;
     const running = tasks.filter((t) => t.status === "running").length;
-    const queued = tasks.filter((t) => t.status === "queued");
-    const free = Math.max(0, compressWorkers - running);
+    const queued = tasks.filter((t) => t.status === "queued" && !submittingRef.current.has(t.id));
+    const free = Math.max(0, compressWorkers - running - submittingRef.current.size);
     if (queued.length === 0 || free === 0) return;
     const targets = queued.slice(0, free);
     const ts = Date.now();
-    targets.forEach((t, i) => {
-      const doOverwrite = overwrite && outSame;
-      engine
-        .call("cmp_add", {
-          path: t.path,
-          mode: t.mode,
-          out_dir: outSame ? null : outDir || null,
-          cover_sec: doOverwrite && cover ? coverSec : null,
-          overwrite: doOverwrite,
-        })
-        .then((r) => {
-          const cid = (r as { cmp_id?: number }).cmp_id;
-          setTasks((prev) =>
-            prev.map((x) => (x.id === t.id ? { ...x, cmpId: cid, status: "running", pct: 0, startTs: ts + i } : x)),
-          );
-        });
-    });
+    targets.forEach((t, i) => launchTask(t, ts, i));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started, tasks, compressWorkers, overwrite, outSame, outDir, cover, coverSec]);
 
-  /* 终止：发引擎停止（引擎回 stopped 事件驱动状态） */
+
+
+  /* 终止：发引擎停止（UI 先乐观置为已终止，行变琥珀色、按钮切为重新压缩/删除；引擎回 stopped 事件最终对齐） */
   const stopTask = (t: CmpTask) => {
+    submittingRef.current.delete(t.id);
+    diag(`STOP_EXEC id=${t.id} cmpId=${t.cmpId ?? "null"}`);
+    // 乐观更新：给用户立即的视觉反馈（不再干等引擎事件，防止界面毫无反应）
+    setTasks((prev) =>
+      prev.map((x) => (x.id === t.id ? { ...x, status: "stopped", pct: undefined } : x)),
+    );
     if (t.cmpId != null) {
       engine.call("cmp_stop", { cmp_id: t.cmpId });
     }
@@ -620,7 +729,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
             case "compressing":
               return { ...t, status: "running", pct: e.pct, pos: e.pos, dur: e.dur, etaSec: e.eta ?? undefined };
             case "done": {
-              const el = t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000) : undefined;
+              const el = t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000, lang) : undefined;
               return { ...t, status: "done", outSize: e.outSize, ratio: e.ratio, orig: e.orig ?? t.orig, elapsed: el, pct: 100, outPath: e.out || t.outPath };
             }
             case "failed":
@@ -631,7 +740,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                 ...t,
                 status: "skipped",
                 pct: undefined,
-                elapsed: t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000) : undefined,
+                elapsed: t.startTs ? fmtElapsed((Date.now() - t.startTs) / 1000, lang) : undefined,
               };
             case "stopped":
               return { ...t, status: "stopped", pct: undefined };
@@ -649,47 +758,48 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
       <div className="shrink-0 p-4 pb-3 flex items-center gap-2">
         <Button variant="soft" onClick={pickVideos} disabled={busy}>
           <Icon d="M12 5v14M5 12h14" size={14} />
-          添加视频
+          {t("cmp.addVideos")}
         </Button>
-        <Button variant="soft" onClick={pickFolder} onMouseEnter={(e) => show(e.currentTarget, "递归添加文件夹内全部视频")} disabled={busy}>
+        <Button variant="soft" onClick={pickFolder} onMouseEnter={(e) => show(e.currentTarget, t("cmp.addFolderTip"))} disabled={busy}>
           <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={14} />
-          {busy ? "扫描中…" : "添加文件夹"}
+          {busy ? t("cmp.scanning") : t("cmp.addFolder")}
         </Button>
 
-        <div className="flex items-center gap-1.5 ml-2 text-[12px] text-text-sub">
-          默认模式
-          <Select value={defMode} onChange={setDefMode} options={COMPRESS_MODES} tint={MODE_TINTS[defMode] ?? ""} className="w-[130px]" />
+        <div className="flex items-center gap-1.5 ml-2 text-[14px] text-text-sub">
+          {t("cmp.modeLabel")}
+          <Select value={defMode} onChange={setDefMode} options={compressModes} tint={MODE_TINTS[defMode] ?? ""} className="w-[145px]" />
         </div>
 
         <div className="flex-1" />
 
         <Button onClick={startCompress} disabled={queuedTasks.length === 0 || runningCount >= compressWorkers}>
           <Icon d="M8 5v14l11-7z" size={13} />
-          开始压缩
+          {t("cmp.start")}
         </Button>
         <Button variant="ghost" onClick={() => setTasks((p) => p.filter((t) => t.status !== "done" && t.status !== "stopped" && t.status !== "failed" && t.status !== "skipped"))}>
-          清空已完成
+          {t("cmp.clearDone")}
         </Button>
       </div>
 
       {/* 任务列表 */}
       <div className="flex-1 min-h-0 px-4 pb-3 flex flex-col">
-        {/* 标题行固定高度（h-5）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
-        <div className="flex items-center justify-between mb-2 shrink-0 h-5 overflow-hidden">
+        {/* 标题行固定高度（h-6）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
+        <div className="flex items-center justify-between mb-2 shrink-0 h-6 overflow-hidden">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="text-[12px] font-semibold text-text-main whitespace-nowrap">
-              压缩任务 <span className="text-text-sub font-normal">（{tasks.length} 项）</span>
+            <div className="text-[14px] font-semibold text-text-main whitespace-nowrap">
+              {t("cmp.title")}{" "}
+              <span className="text-text-sub font-normal text-[13px]">{t("cmp.items", { count: tasks.length })}</span>
             </div>
             {sel.size > 0 && (
-              <div className="text-[11px] text-text-sub whitespace-nowrap">可使用 Ctrl 或 Shift 多选移除队列</div>
+              <div className="text-[12px] text-text-sub whitespace-nowrap">{t("cmp.selectTip")}</div>
             )}
           </div>
           {sel.size > 0 ? (
-            <button onClick={removeSelected} className="text-[12px] font-medium text-danger hover:underline shrink-0">
-              删除选中（{sel.size}）
+            <button onClick={removeSelected} className="text-[13px] font-medium text-danger hover:underline shrink-0">
+              {t("cmp.removeSelected", { count: sel.size })}
             </button>
           ) : (
-            <div className="text-[11px] text-text-sub whitespace-nowrap">可拖入文件 · 排队中可拖动调整优先级</div>
+            <div className="text-[12px] text-text-sub whitespace-nowrap">{t("cmp.dragPrompt")}</div>
           )}
         </div>
         <div
@@ -703,7 +813,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-text-sub/70 gap-2">
               <Icon d="M12 5v14M5 12h14" size={36} strokeWidth={1.5} />
-              <div className="text-[12px]">添加视频文件后开始压缩</div>
+              <div className="text-[14px]">{t("cmp.emptyTip")}</div>
             </div>
           ) : (
             <>
@@ -714,10 +824,10 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                   t={t}
                   onCtx={openCtx}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                  onStop={stopTask}
+                  onStop={(t) => { diag(`STOPBTN id=${t.id} cmpId=${t.cmpId ?? "null"}`); setConfirmStop({ t, action: "stop" }); }}
                   onRestart={restartTask}
                   onTop={(x) => top(x.id)}
-                  onDelete={(x) => remove(x.id)}
+                  onDelete={onDeleteClick}
                 />
               ))}
               {/* 排队中：可拖拽排序（独立子容器，坐标从本区顶部算起） */}
@@ -731,10 +841,10 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                       selected={sel.has(t.id)}
                       onCtx={openCtx}
                       onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                      onStop={stopTask}
+                      onStop={(t) => { diag(`STOPBTN id=${t.id} cmpId=${t.cmpId ?? "null"}`); setConfirmStop({ t, action: "stop" }); }}
                       onRestart={restartTask}
                       onTop={(x) => top(x.id)}
-                      onDelete={(x) => remove(x.id)}
+                      onDelete={onDeleteClick}
                       drag={{
                         ...p,
                         onMouseDown: (e) => dragSort.onRowMouseDown(e, t.id),
@@ -752,10 +862,10 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                   onRowClick={handleRowClick}
                   onCtx={openCtx}
                   onMode={(m) => move(t.id, (x) => ({ ...x, mode: m }))}
-                  onStop={stopTask}
+                  onStop={(t) => { diag(`STOPBTN id=${t.id} cmpId=${t.cmpId ?? "null"}`); setConfirmStop({ t, action: "stop" }); }}
                   onRestart={restartTask}
                   onTop={(x) => top(x.id)}
-                  onDelete={(x) => remove(x.id)}
+                  onDelete={onDeleteClick}
                 />
               ))}
             </>
@@ -763,24 +873,68 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
         </div>
       </div>
 
-      {/* 底部：收益统计 + 关机开关 */}
-      <div className="shrink-0 h-11 px-4 border-t border-border-soft bg-white/70 flex items-center gap-4">
-        <div className="text-[12px] text-text-main tabular-nums">
-          当前任务列表，已完成压缩收益{" "}
-          <span className="font-semibold text-brand-700">{(gain / 1024 ** 3).toFixed(2)} GB</span>
-        </div>
-        <div className="flex-1" />
-        <div
-          className="flex items-center gap-2 cursor-pointer select-none"
-          onMouseEnter={(e) => show(e.currentTarget, "所有任务结束后自动关机")}
-        >
-          <Toggle checked={shutdown} onChange={setShutdown} />
-          <span className="text-[12px] text-text-main">所有任务结束后关机</span>
-        </div>
-      </div>
-
       {/* 行右键菜单（光标位置就近弹出） */}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
+
+      {/* 终止确认：行内停止按钮（终止保留行）或右键移出压缩中任务（终止并移出）。
+         两者都会删除未压缩完的中间输出，无法从断点继续 */}
+      {confirmStop && (
+        <Dialog open onClose={() => { diag(`STOPDLG cancel`); setConfirmStop(null); }} title={t("cmp.stopDlgTitle")} width={440}>
+          <p className="text-[15px] text-text-main leading-relaxed">
+            {t("cmp.stopDlgText")}
+          </p>
+          <div className="flex justify-end gap-2 mt-5">
+            <Button variant="ghost" onClick={() => { diag(`STOPDLG cancel`); setConfirmStop(null); }}>
+              {t("ffmpeg.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                const c = confirmStop;
+                diag(`STOPDLG confirm action=${c?.action} id=${c?.t.id} cmpId=${c?.t.cmpId ?? "null"}`);
+                setConfirmStop(null);
+                if (!c) return;
+                if (c.action === "remove") remove(c.t.id);
+                else stopTask(c.t);
+              }}
+            >
+              {confirmStop.action === "remove" ? t("cmp.stopDlgStopAndRemove") : t("cmp.stopDlgStop")}
+            </Button>
+          </div>
+        </Dialog>
+      )}
+
+      {/* 批量移出确认：选中集合含压缩中任务 */}
+      {multiStop && (
+        <Dialog open onClose={() => { diag(`MULTISTOP cancel n=${multiStop?.n}`); setMultiStop(null); }} title={t("cmp.multiStopTitle")} width={440}>
+          <p className="text-[15px] text-text-main leading-relaxed">
+            {t("cmp.multiStopDesc", { n: multiStop.n })}
+          </p>
+          <div className="flex justify-end gap-2 mt-5">
+            <Button variant="ghost" onClick={() => { diag(`MULTISTOP cancel n=${multiStop?.n}`); setMultiStop(null); }}>
+              {t("ffmpeg.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                const m = multiStop;
+                diag(`MULTISTOP confirm ids=${m?.ids?.join(",")}`);
+                setMultiStop(null);
+                if (!m) return;
+                m.ids.forEach((id) => {
+                  const t = tasks.find((x) => x.id === id);
+                  if (t && t.cmpId != null) engine.call("cmp_stop", { cmp_id: t.cmpId });
+                  submittingRef.current.delete(id);
+                });
+                setTasks((prev) => prev.filter((t) => !m.ids.includes(t.id)));
+                setSel(new Set());
+              }}
+            >
+              {t("cmp.multiStopConfirm")}
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 });

@@ -79,9 +79,20 @@ export const MODE_TINTS: Record<string, string> = {
   av1: "rgba(123, 44, 191, 0.30)",
 };
 
+import type { TranslationKey } from "./i18n";
+
 export const COMPRESS_MODES = [
   { value: "default", label: "默认（均衡）", tint: MODE_TINTS.default },
   { value: "hq", label: "画质优先", tint: MODE_TINTS.hq },
   { value: "fast", label: "速度优先", tint: MODE_TINTS.fast },
   { value: "av1", label: "AV1 极限压缩", tint: MODE_TINTS.av1 },
 ];
+
+export function getCompressModes(t: (k: TranslationKey) => string) {
+  return [
+    { value: "default", label: t("mode.default"), tint: MODE_TINTS.default },
+    { value: "hq", label: t("mode.hq"), tint: MODE_TINTS.hq },
+    { value: "fast", label: t("mode.fast"), tint: MODE_TINTS.fast },
+    { value: "av1", label: t("mode.av1"), tint: MODE_TINTS.av1 },
+  ];
+}

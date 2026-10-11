@@ -32,3 +32,7 @@ yt-dlp.exe
 # TK 閻楀牊瀚嬮幏鐣屾殌鐎涙﹫绱橳auri 閻楀牅绗夐棁鈧憰渚婄礆
 vendor/
 
+
+# 本地构建输出
+ui.exe
+*.dll

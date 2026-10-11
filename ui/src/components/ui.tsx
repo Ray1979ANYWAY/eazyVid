@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -25,8 +26,8 @@ export function Button({
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 " +
     "disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer select-none";
   const sizes = {
-    sm: "text-[12px] px-2.5 h-7",
-    md: "text-[13px] px-3.5 h-8",
+    sm: "text-[13px] px-3 h-8",
+    md: "text-[14px] px-3.5 h-9",
   };
   const variants: Record<BtnVariant, string> = {
     primary:
@@ -208,12 +209,12 @@ export function Select({
           }
         }}
         style={curTint ? { background: curTint } : undefined}
-        className={`h-7 rounded-md border border-border-soft bg-white px-2 text-[12px] text-text-main
+        className={`h-8 rounded-md border border-border-soft bg-white px-2.5 text-[14px] text-text-main
           flex items-center justify-between gap-1 cursor-pointer hover:border-brand-400
           focus:outline-2 focus:outline-brand-500 ${open ? "border-brand-400" : ""}`}
       >
         <span className="truncate">{cur?.label ?? value}</span>
-        <span className="text-[10px] text-text-soft leading-none shrink-0">▾</span>
+        <span className="text-[11px] text-text-soft leading-none shrink-0">▾</span>
       </div>
       {/* 展开面板：portal 到 body 顶层，每行底色 = 该模式色阶（none/无 tint 为白底） */}
       {open &&
@@ -221,7 +222,7 @@ export function Select({
           <div
             ref={panelRef}
             role="listbox"
-            className={`fixed z-[100] max-h-[200px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg py-1 ${pos.up ? "mb-1" : "mt-1"}`}
+            className={`fixed z-[100] max-h-[220px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg ${pos.up ? "mb-1" : "mt-1"}`}
             style={{
               left: pos.left,
               minWidth: pos.width,
@@ -238,11 +239,11 @@ export function Select({
                   onChange(o.value);
                   setOpen(false);
                 }}
-                className={`px-2 py-[5px] text-[12px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
+                className={`px-2.5 py-1.5 text-[14px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
                   ${o.value === value ? "font-semibold text-text-main" : "text-text-main"}`}
               >
                 <span>{o.label}</span>
-                {o.value === value && <span className="text-[10px] text-brand-600 leading-none">✓</span>}
+                {o.value === value && <span className="text-[11px] text-brand-600 leading-none">✓</span>}
               </div>
             ))}
           </div>,
@@ -320,10 +321,24 @@ export function ContextMenu({
       window.removeEventListener("contextmenu", close);
     };
   }, [onClose, items.length, x, y]);
-  /* Portal 到 body：右键菜单永远渲染在最顶层，不受容器 transform/overflow/z-index 干扰 */
+  /* Portal 到 body：右键菜单永远渲染在最顶层，不受容器 transform/overflow/z-index 干扰；
+     贴窗口边缘时自动向内偏移（否则菜单被 WebView 裁掉/溢出） */
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    let nx = x;
+    let ny = y;
+    const pad = 4;
+    if (nx + r.width > window.innerWidth - pad) nx = Math.max(pad, window.innerWidth - r.width - pad);
+    if (ny + r.height > window.innerHeight - pad) ny = Math.max(pad, window.innerHeight - r.height - pad);
+    if (nx !== x || ny !== y) setPos({ x: nx, y: ny });
+  }, [x, y]);
   return createPortal(
-    <div className="fixed z-[9999]" data-ctx-menu style={{ left: x, top: y }}>
-      <div className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
+    <div className="fixed z-[9999]" data-ctx-menu style={{ left: pos.x, top: pos.y }}>
+      <div ref={menuRef} className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
         {items.map((it, i) => (
           <button
             key={i}
@@ -331,7 +346,7 @@ export function ContextMenu({
               it.onClick();
               onClose();
             }}
-            className={`w-full text-left px-3.5 h-8 text-[12.5px] cursor-pointer hover:bg-brand-50 transition-colors ${it.danger ? "text-danger" : "text-text-main"}`}
+            className={`w-full text-left px-3.5 h-8.5 text-[14px] cursor-pointer hover:bg-brand-50 transition-colors ${it.danger ? "text-danger" : "text-text-main"}`}
           >
             {it.label}
           </button>
@@ -356,23 +371,33 @@ export function Dialog({
   children: ReactNode;
   width?: number;
 }) {
+  const openTs = useRef(Date.now());
+  useEffect(() => {
+    if (open) openTs.current = Date.now();
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[#14185e]/30 backdrop-blur-[2px]"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => {
+        // 防止快速双击/连击触发按钮时，第二击落在遮罩上导致弹窗被秒关（此前 88ms 闪退无感知）
+        if (e.target === e.currentTarget && Date.now() - openTs.current > 300) {
+          onClose();
+        }
+      }}
     >
       <div
         className="bg-white rounded-xl shadow-2xl shadow-brand-900/20 border border-border-soft flex flex-col max-h-[86vh]"
         style={{ width }}
       >
         <div className="flex items-center justify-between px-5 h-12 border-b border-border-soft shrink-0">
-          <div className="text-[14px] font-semibold text-brand-800 font-display">{title}</div>
+          <div className="text-[16px] font-semibold text-brand-800 font-display">{title}</div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-md inline-flex items-center justify-center text-text-sub hover:bg-slate-100 hover:text-text-main cursor-pointer"
+            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-text-sub hover:bg-slate-100 hover:text-text-main cursor-pointer"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
@@ -396,10 +421,10 @@ export function FieldRow({
   disabled?: boolean;
 }) {
   return (
-    <div className={`flex items-center gap-3 min-h-9 ${disabled ? "opacity-45" : ""}`}>
-      <div className="w-[190px] shrink-0 text-[13px] text-text-main">{label}</div>
+    <div className={`flex items-center gap-3 min-h-10 ${disabled ? "opacity-45" : ""}`}>
+      <div className="w-[210px] shrink-0 text-[15px] text-text-main">{label}</div>
       <div className="flex items-center gap-2 flex-1">{children}</div>
-      {hint && <div className="text-[11px] text-text-sub leading-4 shrink-0">{hint}</div>}
+      {hint && <div className="text-[12px] text-text-sub leading-4 shrink-0">{hint}</div>}
     </div>
   );
 }

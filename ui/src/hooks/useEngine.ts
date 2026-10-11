@@ -1,6 +1,6 @@
 /* eazyVid 引擎桥接：Rust spawn 的 Python engine_rpc.py
    call() 发命令（Promise 匹配响应）；on() 订阅引擎事件流（进度/状态） */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -72,7 +72,7 @@ export function useEngine() {
     };
   }, []);
 
-  const call = (cmd: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+  const call = useCallback((cmd: string, params: Record<string, unknown> = {}): Promise<unknown> => {
     const id = seq++;
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject });
@@ -83,14 +83,14 @@ export function useEngine() {
         reject(new Error(String(e)));
       });
     });
-  };
+  }, []);
 
-  const on = (fn: (ev: EngineEvent) => void): (() => void) => {
+  const on = useCallback((fn: (ev: EngineEvent) => void): (() => void) => {
     listeners.add(fn);
     return () => {
       listeners.delete(fn);
     };
-  };
+  }, []);
 
   return { ready, call, on };
 }

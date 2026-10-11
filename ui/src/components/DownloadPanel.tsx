@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, IconBtn, Icon, Select, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
-import { type DlFormat, type DlTask, COMPRESS_MODES, MODE_TINTS } from "../mock";
+import { Button, IconBtn, Icon, Select, Dialog, fmtSize, fmtSpeed, useTip, ContextMenu, type CtxItem } from "./ui";
+import { type DlFormat, type DlTask, MODE_TINTS, getCompressModes } from "../mock";
 import { useDragSort } from "../hooks/useDragSort";
 import { useEngine } from "../hooks/useEngine";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { diag } from "../diag";
+import { useI18n, type TranslationKey } from "../i18n";
 
 /* 下载行压缩模式选项：默认"不压缩"，选了模式则下载完成自动入压缩队列 */
-const DL_MODES = [{ value: "none", label: "不压缩" }, ...COMPRESS_MODES];
+function getDlModes(t: (k: TranslationKey, p?: any) => string) {
+  return [{ value: "none", label: t("dl.mode.none") }, ...getCompressModes(t)];
+}
 
 /** 打开文件/目录：调用前后 + 错误全部落盘探针（定位"点了没动作"） */
 const tryOpen = (p: string, kind: string) => {
@@ -23,7 +26,7 @@ const tryReveal = (p: string, kind: string) => {
     .catch((e) => diag(`REVEAL ${kind} FAIL ${String(e)}`));
 };
 
-const DL_ROW_H = 62; // 56px 行高 + 6px 间距
+const DL_ROW_H = 68; // 62px 行高 + 6px 间距
 
 /* ============ 格式列表行 ============ */
 /* 从混杂文本（分享文案+表情+链接）提取 URL：优先 Markdown [标题](url)，否则第一个 http(s) 链接 */
@@ -35,27 +38,29 @@ function extractUrl(text: string): string {
   return m ? m[0].replace(/[)\]]+$/, "") : "";
 }
 
-function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) => void }) {  const [hover, setHover] = useState(false);
+function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) => void }) {
+  const [hover, setHover] = useState(false);
   const show = useTip();
+  const { t } = useI18n();
 
   return (
     <div
-      className="grid grid-cols-[90px_70px_80px_100px_1fr_72px] items-center h-11 px-3 rounded-lg border border-transparent
+      className="grid grid-cols-[100px_75px_85px_105px_1fr_80px] items-center h-12 px-3 rounded-lg border border-transparent
         hover:border-border-brand hover:bg-brand-50/50 transition-colors cursor-default"
       style={{ background: hover ? undefined : undefined }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onDoubleClick={() => onDownload(f)}
     >
-      <div className="text-[13px] font-semibold text-brand-700">{f.res}</div>
-      <div className="text-[12px] text-text-sub">{f.ext.toUpperCase()}</div>
-      <div className="text-[12px] text-text-sub">{f.codec}</div>
-      <div className="text-[12px] text-text-main">{f.size}</div>
+      <div className="text-[15px] font-semibold text-brand-700">{f.res}</div>
+      <div className="text-[14px] text-text-sub">{f.ext.toUpperCase()}</div>
+      <div className="text-[14px] text-text-sub">{f.codec}</div>
+      <div className="text-[14px] text-text-main">{f.size}</div>
       <div className="flex items-center gap-1.5 min-w-0">
         {f.warn && (
           <span
             title={f.warnText}
-            className="shrink-0 inline-flex items-center gap-1 text-[11px] text-warn cursor-help"
+            className="shrink-0 inline-flex items-center gap-1 text-[12px] text-warn cursor-help"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 8v5m0 4v.5M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
@@ -69,10 +74,10 @@ function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) =
           <Button
             size="sm"
             onClick={() => onDownload(f)}
-            onMouseEnter={(e) => show(e.currentTarget, "下载此格式（双击行也可）")}
+            onMouseEnter={(e) => show(e.currentTarget, t("dl.formatDownloadTip"))}
           >
             <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" size={13} />
-            下载
+            {t("dl.downloadBtn")}
           </Button>
         )}
       </div>
@@ -111,20 +116,22 @@ function DlRow({
   onPause?: (t: DlTask) => void;
   onResume?: (t: DlTask) => void;
   onRestart?: (t: DlTask) => void;
-  onDelete?: (t: DlTask) => void;
+  onDelete?: (e: React.MouseEvent, t: DlTask) => void;
 }) {
   const pct = t.total > 0 ? Math.min(100, (t.got / t.total) * 100) : 0;
   const show = useTip();
+  const { t: translate } = useI18n();
+  const dlModes = useMemo(() => getDlModes(translate), [translate]);
   const isDownloading = t.status === "downloading" || t.status === "parsing";
 
   const statusText: Record<string, string> = {
-    downloading: "下载中",
-    parsing: "解析中…",
-    merging: "正在合并音轨，请稍候",
-    waiting: "等待下载",
-    paused: "已暂停",
-    done: "已完成",
-    failed: "下载失败",
+    downloading: translate("dl.status.downloading"),
+    parsing: translate("dl.status.parsing"),
+    merging: translate("dl.status.merging"),
+    waiting: translate("dl.status.waiting"),
+    paused: translate("dl.status.paused"),
+    done: translate("dl.status.done"),
+    failed: translate("dl.status.failed"),
   };
 
   const baseBg =
@@ -147,22 +154,22 @@ function DlRow({
       )}
 
       <div
-        className="relative grid grid-cols-[1fr_110px_70px_80px_118px_120px] items-center h-14 px-3 gap-2"
+        className="relative grid grid-cols-[1fr_125px_75px_90px_130px_120px] items-center h-[62px] px-3 gap-2"
         onContextMenu={(e) => onCtx(e, t)}
       >
         {/* 文件名（溢出隐藏，tooltip 完整名） */}
         <div className="min-w-0" onMouseEnter={(e) => show(e.currentTarget, t.name)}>
-          <div className="text-[13px] text-text-main truncate">{t.name}</div>
-          <div className="text-[11px] text-text-sub mt-0.5">{statusText[t.status]}</div>
+          <div className="text-[15px] text-text-main truncate">{t.name}</div>
+          <div className="text-[12px] text-text-sub mt-0.5">{statusText[t.status]}</div>
         </div>
 
         {/* 大小 */}
-        <div className="text-[12px] text-text-sub tabular-nums">
+        <div className="text-[14px] text-text-sub tabular-nums">
           {fmtSize(t.got)} / {fmtSize(t.total)}
         </div>
 
         {/* 进度百分比 */}
-        <div className="text-[12px] font-semibold text-brand-700 tabular-nums">
+        <div className="text-[14px] font-semibold text-brand-700 tabular-nums">
           {t.status === "downloading"
             ? `${Math.round(pct)}%`
             : t.status === "done" || t.status === "merging"
@@ -171,7 +178,7 @@ function DlRow({
         </div>
 
         {/* 速度 */}
-        <div className="text-[12px] text-text-sub tabular-nums">
+        <div className="text-[14px] text-text-sub tabular-nums">
           {t.status === "downloading" || t.status === "merging"
             ? typeof t.speed === "string"
               ? t.speed
@@ -183,39 +190,50 @@ function DlRow({
             底色紫色色阶：压缩程度越深色越深（画质优先最浅 → AV1 最深，30% 透明度品牌紫） */}
         <div
           className="min-w-0"
-          onMouseEnter={(e) => show(e.currentTarget, t.compressMode && t.compressMode !== "none" ? "下载完成后自动压缩" : "下载完成后不压缩，可后续手动添加压缩")}
+          onMouseEnter={(e) => show(e.currentTarget, t.compressMode && t.compressMode !== "none" ? translate("dl.modeTipAuto") : translate("dl.modeTipManual"))}
         >
-          <Select value={t.compressMode ?? "none"} onChange={(m) => onMode?.(t, m)} options={DL_MODES} tint={MODE_TINTS[t.compressMode ?? ""] ?? ""} className="w-full" />
+          <Select
+            value={t.compressMode ?? "none"}
+            onChange={(m) => onMode?.(t, m)}
+            options={dlModes}
+            disabled={t.status === "downloading" || t.status === "parsing" || t.status === "merging" || t.status === "done"}
+            tint={MODE_TINTS[t.compressMode ?? ""] ?? ""}
+            className="w-full"
+          />
         </div>
 
         {/* 操作（内容层在进度条之上，不被遮挡） */}
         <div className="flex items-center justify-end gap-1">
           {(t.status === "downloading" || t.status === "parsing") && (
-            <IconBtn tip="暂停" onClick={() => onPause?.(t)}>
+            <IconBtn tip={translate("dl.pause")} onClick={() => onPause?.(t)}>
               <Icon d="M10 4v16M14 4v16" size={18} />
             </IconBtn>
           )}
           {t.status === "paused" && (
-            <IconBtn tip="恢复（排入等待队列）" onClick={() => onResume?.(t)}>
+            <IconBtn tip={translate("dl.resume")} onClick={() => onResume?.(t)}>
               <Icon d="M8 5v14l11-7z" size={18} />
             </IconBtn>
           )}
           {t.status === "failed" && (
-            <IconBtn tip="重新下载（排入等待队列）" onClick={() => onRestart?.(t)}>
+            <IconBtn tip={translate("dl.retry")} onClick={() => onRestart?.(t)}>
               <Icon d="M4 4v6h6M20 20v-6h-6M20 9a8 8 0 0 0-14.9-2M4 15a8 8 0 0 0 14.9 2" size={18} />
             </IconBtn>
           )}
           {t.status === "done" && (
             <>
-              <IconBtn tip="打开文件" onClick={() => t.path && tryOpen(t.path, "dl-row-open")}>
+              <IconBtn tip={translate("dl.openFile")} onClick={() => t.path && tryOpen(t.path, "dl-row-open")}>
                 <Icon d="M14 4h6v6m0-6L9 15m11-11v6" size={18} />
               </IconBtn>
-              <IconBtn tip="打开所在文件夹" onClick={() => t.path && tryReveal(t.path, "dl-row-reveal")}>
+              <IconBtn tip={translate("dl.openDir")} onClick={() => t.path && tryReveal(t.path, "dl-row-reveal")}>
                 <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={18} />
               </IconBtn>
             </>
           )}
-          <IconBtn tip="删除" onClick={() => onDelete?.(t)} className="hover:text-danger hover:bg-danger/10">
+          <IconBtn
+            tip={translate("dl.remove")}
+            onClick={(e) => onDelete?.(e, t)}
+            className="hover:text-danger hover:bg-danger/10"
+          >
             <Icon d="M3 6h18M8 6V4h8v2m1 0 1 14H6L5 6m5 5v6m4-6v6" size={18} />
           </IconBtn>
         </div>
@@ -229,10 +247,10 @@ function DlRow({
       <>
         <div
           className="relative mb-1.5 rounded-lg border-2 border-dashed border-brand-300/60 bg-brand-50/40"
-          style={{ height: 56 }}
+          style={{ height: 62 }}
         />
         <div
-          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white"
+          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white pointer-events-none"
           style={{ top: drag.draggingTop, left: drag.draggingLeft, width: drag.draggingWidth }}
         >
           {inner}
@@ -243,6 +261,7 @@ function DlRow({
 
   return (
     <div
+      data-task-row="true"
       onMouseDown={drag?.onMouseDown}
       onClick={
         onRowClick
@@ -271,12 +290,14 @@ export function DownloadPanel({
   dlWorkers = 3,
   dlDir = "",
   onActivityChange,
+  onDoneCountChange,
   onCompress,
   active = true,
 }: {
   dlWorkers?: number;
   dlDir?: string;
-  onActivityChange?: (busy: boolean, fail: boolean, running: number) => void;
+  onActivityChange?: (busy: boolean, fail: boolean, running: number, queued: number) => void;
+  onDoneCountChange?: (count: number) => void;
   /* 下载完成且选了压缩模式 → 自动加入压缩队列队尾（App 接线到 CompressPanel.addDownloadedTask） */
   onCompress?: (path: string, name: string, mode: string) => void;
   /* 当前是否为可见面板：隐藏面板不响应 Delete/Backspace（多选删除只作用于当前面板） */
@@ -289,12 +310,17 @@ export function DownloadPanel({
   const [fileOver, setFileOver] = useState(false);
   const [probeErr, setProbeErr] = useState("");
   const [ctx, setCtx] = useState<{ x: number; y: number; t: DlTask } | null>(null);
+  /* 垃圾桶删除菜单（光标旁两行：仅移出列表 / 移出列表并删除文件） */
+  const [delMenu, setDelMenu] = useState<{ x: number; y: number; t: DlTask } | null>(null);
+  /* 批量移出确认：选中含未完成任务时弹提示（将删临时下载缓存，已完成保留） */
+  const [confirmRemove, setConfirmRemove] = useState<{ ids: string[]; n: number } | null>(null);
   /* 多选（Ctrl/Shift；运行中不可选；Delete 或右键批量移出） */
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   /* 格式列表表头排序：分辨率/格式/编码/大小 可点击，同列点击翻转方向 */
   const [sortKey, setSortKey] = useState<{ key: "res" | "ext" | "codec" | "size"; dir: 1 | -1 }>({ key: "res", dir: 1 });
   const show = useTip();
+  const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const engine = useEngine();
   /* tasks 镜像：引擎事件回调里读最新任务（判断 done 任务的压缩模式） */
@@ -327,34 +353,42 @@ export function DownloadPanel({
   const toggleSort = (key: "res" | "ext" | "codec" | "size") =>
     setSortKey((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
 
-  /* 行右键：已完成 = 打开文件 + 打开所在目录；其余 = 打开所在目录 */
+  /* 行右键：右键行不在选中集合内 → 重置选中为该行（菜单按右键行提供单选选择）；
+     右键行在选中集合内 → 保持多选，提供批量移出 */
   const openCtx = (e: React.MouseEvent, t: DlTask) => {
     e.preventDefault();
     e.stopPropagation(); // 阻止冒泡到 window（否则同一次右键会把刚渲染的菜单秒关）
+    if (!sel.has(t.id)) {
+      setSel(new Set([t.id]));
+      setAnchor(t.id);
+    }
     setCtx({ x: e.clientX, y: e.clientY, t });
   };
   const ctxItems = (): CtxItem[] => {
     if (!ctx) return [];
-    const { t } = ctx;
+    const { t: task } = ctx;
     /* 多选（右键行在选中集合内）：只提供批量移出——不提供打开文件/目录，
        不同文件所属目录不同，多选打开会弹出一堆资源管理器 */
-    if (sel.size > 1 && sel.has(t.id)) {
-      return [{ label: `移出队列（${sel.size} 项）`, onClick: removeSelected }];
+    if (sel.size > 1 && sel.has(task.id)) {
+      return [{ label: t("dl.removeMulti", { count: sel.size }), onClick: removeSelected }];
     }
-    const p = t.path || "";
+    const p = task.path || "";
     const items: CtxItem[] = [];
-    if (t.status === "done" && p) {
-      items.push({ label: "打开文件", onClick: () => tryOpen(p, "dl-open") });
+    /* 单选：已完成 = 打开文件 + 打开目录 + 移出队列；非完成（含进行中）= 打开目录 + 移出队列
+       （进行中移出走 removeOne 的警告：未完成将删临时缓存） */
+    if (task.status === "done" && p) {
+      items.push({ label: t("dl.openFile"), onClick: () => tryOpen(p, "dl-open") });
     }
     items.push({
-      label: "打开所在目录",
+      label: t("dl.openDir"),
       onClick: () => {
         const dir = p ? p.slice(0, Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"))) : dlDir;
         // 完成态：定位到文件；非完成态（部分/临时文件可能不存在）：打开目录本身
-        if (t.status === "done" && p) tryReveal(p, "dl-reveal");
+        if (task.status === "done" && p) tryReveal(p, "dl-reveal");
         else if (dir) tryOpen(dir, "dl-open-dir");
       },
     });
+    items.push({ label: t("cmp.removeFromList"), onClick: () => removeOne(task) });
     return items;
   };
 
@@ -394,13 +428,9 @@ export function DownloadPanel({
     }
   };
 
-  /* 批量移出：完成态仅移出列表（保留文件）；非完成态引擎清理临时缓存/进程（dl_remove） */
-  const removeSelected = () => {
-    const ids = [...sel].filter((id) => {
-      const x = tasks.find((t) => t.id === id);
-      return x && x.status !== "downloading" && x.status !== "parsing" && x.status !== "merging";
-    });
-    if (ids.length === 0) return;
+  /* 移出执行（ids 可为多选集合或单选）：完成态保留文件（仅移出列表）；非完成态引擎清理临时缓存/进程（dl_remove）。
+     注：进行中（下载中/解析中/合并中）也允许移出——用户确认过"可以移出，只要挂警告"；此前过滤进行中状态导致确认后空转 */
+  const doRemoveIds = (ids: string[]) => {
     ids.forEach((id) => {
       const x = tasks.find((t) => t.id === id);
       if (x && x.status !== "done" && x.taskId != null) {
@@ -409,6 +439,24 @@ export function DownloadPanel({
     });
     setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
     setSel(new Set());
+    setConfirmRemove(null);
+  };
+  /* 批量移出入口：选中含"有下载产物"的任务（下载中/解析中/合并/暂停/失败）→ 弹提示确认（将删临时缓存，已完成保留）；
+     等待下载（无产物）与已完成 → 直接移出 */
+  const removeSelected = () => {
+    const ids = [...sel];
+    if (ids.length === 0) return;
+    const hasArtifact = ids.filter((id) => {
+      const x = tasks.find((t) => t.id === id);
+      return x && x.status !== "done" && x.status !== "waiting";
+    }).length;
+    if (hasArtifact > 0) setConfirmRemove({ ids, n: hasArtifact });
+    else doRemoveIds(ids);
+  };
+  /* 单选移出（右键"移出队列"）：有下载产物的状态 → 弹警告（将删临时缓存）；等待下载/已完成 → 直接移出 */
+  const removeOne = (t: DlTask) => {
+    if (t.status !== "done" && t.status !== "waiting") setConfirmRemove({ ids: [t.id], n: 1 });
+    else doRemoveIds([t.id]);
   };
 
   /* Delete / Backspace 键删除选中（仅当前可见面板；焦点不在输入框时） */
@@ -431,11 +479,11 @@ export function DownloadPanel({
   const toDlFormat = (f: Record<string, unknown>): DlFormat => {
     const vc = String(f.vcodec ?? "");
     const ac = String(f.acodec ?? "");
-    let codec = "未知";
+    let codec = t("dl.unknown");
     if (vc.includes("av1")) codec = "AV1";
     else if (vc.includes("vp")) codec = "VP9";
     else if (vc.includes("avc") || vc.includes("h264")) codec = "H.264";
-    else if (vc === "none") codec = "仅音频";
+    else if (vc === "none") codec = t("dl.audioOnly");
     const size = (f.size as number) ?? 0;
     const note = String(f.note ?? "");
     // 优先显示 "1080p" 式分辨率，其次 "1920x1080"
@@ -444,11 +492,11 @@ export function DownloadPanel({
       id: String(f.id ?? ""),
       res,
       codec,
-      size: size ? fmtSize(size) : "未知",
+      size: size ? fmtSize(size) : t("dl.unknown"),
       ext: String(f.ext ?? "mp4"),
       // YouTube 等 DASH 站点：视频流与音频流分离，videoOnly 格式下载时必须拼 +bestaudio 才有声音
       ...(vc !== "none" && ac === "none" ? { videoOnly: true } : {}),
-      ...(vc.includes("av1") ? { warn: true, warnText: "AV1 兼容性差，多数播放器无法硬解" } : {}),
+      ...(vc.includes("av1") ? { warn: true, warnText: t("dl.av1Warn") } : {}),
     };
   };
 
@@ -480,20 +528,7 @@ export function DownloadPanel({
     },
   );
 
-  /* 完成区虚拟滚动：行高 56 + mb-1.5(6) = 62；只渲染可视区行，长列表不卡 */
-  const DL_DONE_H = 62;
-  const listRef = useRef<HTMLDivElement>(null);
-  const [doneTop, setDoneTop] = useState(0);
-  const [doneViewH, setDoneViewH] = useState(400);
-  const onListScroll = () => {
-    const el = listRef.current;
-    if (!el) return;
-    setDoneTop(el.scrollTop);
-    setDoneViewH(el.clientHeight);
-  };
-  const doneStart = Math.max(0, Math.floor(doneTop / DL_DONE_H) - 4);
-  const doneEnd = Math.min(doneTasks.length, Math.ceil((doneTop + doneViewH) / DL_DONE_H) + 4);
-  const visibleDone = doneTasks.map((t, i) => ({ t, i })).slice(doneStart, doneEnd);
+
 
   /* 探测：引擎直探优先（-J → -F 兜底） */
   const probe = async () => {
@@ -511,14 +546,14 @@ export function DownloadPanel({
       };
       if (!r.ok || !r.formats?.length) {
         setProbeState("idle");
-        setProbeErr(String(r.error || "未解析到可用格式"));
+        setProbeErr(String(r.error || t("dl.errNone")));
         return;
       }
       // 过滤纯音频流（vcodec=none），只展示视频格式
       const fmts = r.formats.filter((f) => String(f.vcodec) !== "none");
       if (!fmts.length) {
         setProbeState("idle");
-        setProbeErr("仅解析到音频流，无视频格式");
+        setProbeErr(t("dl.errAudioOnly"));
         return;
       }
       setFormats(fmts.map(toDlFormat));
@@ -584,6 +619,7 @@ export function DownloadPanel({
       setTasks((prev) => {
         const existing = prev.find((t) => t.taskId === tid);
         if (!existing) {
+          if (state === "failed" || state === "done" || (state as string) === "removed") return prev;
           return [...prev, { id: `dl${tid}`, taskId: tid, name: name || `任务 #${tid}`, path, status: state, got, total, speed, compressMode: "none" }];
         }
         return prev.map((t) => (t.taskId === tid ? { ...t, name: name || t.name, path: path || t.path, status: state, got, total, speed } : t));
@@ -610,9 +646,37 @@ export function DownloadPanel({
   };
 
   /* 删除：引擎清理临时缓存/进程；已完成的保留输出文件 */
-  const remove = (t: DlTask) => {
+  const removeKeep = (t: DlTask) => {
     if (t.taskId != null) void engine.call("dl_remove", { task_id: t.taskId });
     setTasks((prev) => prev.filter((x) => x.id !== t.id));
+  };
+  /* 移出并删除文件：完成态连同已下载文件一起删除（引擎 delete_file=true） */
+  const removeDelete = (t: DlTask) => {
+    if (t.taskId != null) void engine.call("dl_remove", { task_id: t.taskId, delete_file: true });
+    setTasks((prev) => prev.filter((x) => x.id !== t.id));
+  };
+  /* 垃圾桶删除：完成态 = 弹两行菜单（仅移出列表 / 移出列表并删除文件）；
+     未完成态 = 直接移出并删产物（有临时缓存的状态挂警告确认，等待下载无产物直接移出） */
+  const openDelMenu = (e: React.MouseEvent, t: DlTask) => {
+    e.stopPropagation();
+    setDelMenu({ x: e.clientX, y: e.clientY, t });
+  };
+  const onDeleteClick = (e: React.MouseEvent, t: DlTask) => {
+    if (t.status === "done") openDelMenu(e, t);
+    else removeOne(t);
+  };
+  const delItems = (): CtxItem[] => {
+    const tItem = delMenu?.t;
+    if (!tItem) return [];
+    const done = tItem.status === "done";
+    return [
+      { label: t("dl.removeListOnly"), onClick: () => removeKeep(tItem) },
+      {
+        label: done ? t("dl.removeAndDelete") : t("dl.removeCacheOnly"),
+        onClick: () => removeDelete(tItem),
+        danger: true,
+      },
+    ];
   };
 
   /* 行压缩模式：默认"不压缩"，选了模式则下载完成后自动入压缩队列 */
@@ -620,15 +684,21 @@ export function DownloadPanel({
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, compressMode: m } : t)));
 
   const doneCount = useMemo(() => tasks.filter((t) => t.status === "done").length, [tasks]);
+  const doneCountRef = useRef(onDoneCountChange);
+  doneCountRef.current = onDoneCountChange;
+  useEffect(() => {
+    doneCountRef.current?.(doneCount);
+  }, [doneCount]);
 
-  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，退出确认用） */
+  /* 活动状态上报（侧栏状态灯：有运行任务=绿闪，有失败=黄；running=进行中任务数，queued=等待数） */
   const actRef = useRef(onActivityChange);
   actRef.current = onActivityChange;
   useEffect(() => {
     const busy = tasks.some((t) => t.status === "downloading" || t.status === "merging");
     const fail = tasks.some((t) => t.status === "failed");
     const running = tasks.filter((t) => ["downloading", "parsing", "paused", "merging"].includes(t.status)).length;
-    actRef.current?.(busy, fail, running);
+    const queued = tasks.filter((t) => t.status === "waiting").length;
+    actRef.current?.(busy, fail, running, queued);
   }, [tasks]);
 
   return (
@@ -645,32 +715,32 @@ export function DownloadPanel({
               onPaste={(e) => {
                 /* 右键/快捷键粘贴：自动提取 URL，清洗分享文案 */
                 e.preventDefault();
-                const t = e.clipboardData.getData("text");
-                setUrl(extractUrl(t) || t.trim());
+                const text = e.clipboardData.getData("text");
+                setUrl(extractUrl(text) || text.trim());
               }}
               onContextMenu={(e) => {
                 /* 右键单击地址栏 = 立即粘贴（自动提取 URL），不弹系统菜单 */
                 e.preventDefault();
                 void (async () => {
                   try {
-                    const t = await navigator.clipboard.readText();
-                    setUrl(extractUrl(t) || t.trim());
+                    const text = await navigator.clipboard.readText();
+                    setUrl(extractUrl(text) || text.trim());
                   } catch {
                     /* clipboard 权限失败时忽略 */
                   }
                 })();
               }}
-              placeholder="粘贴视频页面地址，回车探测"
-              className="w-full h-9 pl-3.5 pr-12 rounded-lg border border-border-soft bg-white text-[13px] text-text-main
+              placeholder={t("dl.placeholder")}
+              className="w-full h-10 pl-3.5 pr-12 rounded-lg border border-border-soft bg-white text-[15px] text-text-main
                 placeholder:text-text-sub/60 focus:outline-2 focus:outline-brand-500 focus:border-brand-300"
             />
             <IconBtn
-              tip="粘贴（自动提取 URL）"
+              tip={t("dl.pasteTip")}
               onClick={paste}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8"
             >
               {/* 剪贴板 + 向下箭头：把剪贴板内容放入地址栏 */}
-              <Icon d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm5 5v6m0 0 3-3m-3 3-3-3" size={15} />
+              <Icon d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm5 5v6m0 0 3-3m-3 3-3-3" size={16} />
             </IconBtn>
           </div>
 
@@ -678,67 +748,67 @@ export function DownloadPanel({
           {probeState === "probing" ? (
             <button
               onClick={cancelProbe}
-              onMouseEnter={(e) => show(e.currentTarget, "正在探测，点击取消")}
-              className="flex items-center gap-2 h-9 px-3.5 rounded-lg bg-brand-50 border border-brand-300 text-brand-700
-                text-[13px] font-medium cursor-pointer hover:bg-brand-100 transition-colors"
+              onMouseEnter={(e) => show(e.currentTarget, t("dl.probingTip"))}
+              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-brand-50 border border-brand-300 text-brand-700
+                text-[14px] font-medium cursor-pointer hover:bg-brand-100 transition-colors"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
                 <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25" />
                 <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
-              探测中…
+              {t("dl.probing")}
             </button>
           ) : (
-            <Button onClick={probe} disabled={!url.trim()} className="h-9">
-              <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" size={14} />
-              探测格式
+            <Button onClick={probe} disabled={!url.trim()} className="h-10 px-4 text-[14px]">
+              <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" size={15} />
+              {t("dl.probeBtn")}
             </Button>
           )}
         </div>
-        <div className="flex items-center gap-2 mt-2 text-[11px] text-text-sub">
+        <div className="flex items-center gap-2 mt-2 text-[12px] text-text-sub">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-ok" />
-          直连探测优先；藏得太深的视频会自动引导进入嗅探
+          {t("dl.hint")}
         </div>
       </div>
 
       {/* 格式列表（常驻区域：未探测时为空态提示；超 300px 内容区滚动，表头固定） */}
       <div className="shrink-0 px-4 pb-2">
         <div className="rounded-xl border border-border-soft bg-white overflow-hidden">
-          <div className="grid grid-cols-[90px_70px_80px_100px_1fr_72px] items-center h-8 px-3 bg-surface text-[11px] text-text-sub font-medium">
+          <div className="grid grid-cols-[100px_75px_85px_105px_1fr_80px] items-center h-9 px-3 bg-surface text-[12px] text-text-sub font-medium">
             <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("res")}>
-              分辨率
-              <span className="text-[9px] leading-none">{sortKey.key === "res" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+              {t("dl.col.res")}
+              <span className="text-[10px] leading-none">{sortKey.key === "res" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
             </button>
             <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("ext")}>
-              格式
-              <span className="text-[9px] leading-none">{sortKey.key === "ext" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+              {t("dl.col.ext")}
+              <span className="text-[10px] leading-none">{sortKey.key === "ext" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
             </button>
             <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("codec")}>
-              编码
-              <span className="text-[9px] leading-none">{sortKey.key === "codec" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+              {t("dl.col.codec")}
+              <span className="text-[10px] leading-none">{sortKey.key === "codec" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
             </button>
             <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("size")}>
-              大小
-              <span className="text-[9px] leading-none">{sortKey.key === "size" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
+              {t("dl.col.size")}
+              <span className="text-[10px] leading-none">{sortKey.key === "size" ? (sortKey.dir === 1 ? "▲" : "▼") : "⇅"}</span>
             </button>
-            <div>提示</div>
-            <div className="text-right pr-1">操作</div>
+            <div>{t("dl.col.tip")}</div>
+            <div className="text-right pr-1">{t("dl.col.action")}</div>
           </div>
           <div className="max-h-[300px] overflow-y-auto">
             {formats.length === 0 ? (
-              <div className="flex items-center justify-center h-14 text-[12px] text-text-sub/70 gap-1.5">
+              <div className="flex items-center justify-center h-14 text-[13px] text-text-sub/70 gap-1.5">
                 {probeState === "probing" ? (
                   <>
                     <svg width="13" height="13" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
                       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.25" />
                       <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
                     </svg>
-                    正在解析可用格式…
+                    {t("dl.parsingFormats")}
                   </>
                 ) : probeErr ? (
-                  <span className="text-warn">探测失败：{probeErr}</span>
+                  <span className="text-warn">{t("dl.probeFailed", { err: probeErr })}</span>
                 ) : (
-                  <>可用格式将显示在这里</>
+                  <>{t("dl.formatsPlaceholder")}</>
                 )}
               </div>
             ) : (
@@ -754,22 +824,25 @@ export function DownloadPanel({
 
       {/* 下载池 */}
       <div className="flex-1 min-h-0 px-4 pb-4 flex flex-col">
-        {/* 标题行固定高度（h-5）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
-        <div className="flex items-center justify-between mb-2 shrink-0 h-5 overflow-hidden">
+        {/* 标题行固定高度（h-6）：选中注释/删除按钮出现与否都不改变高度，列表不跳动 */}
+        <div className="flex items-center justify-between mb-2 shrink-0 h-6 overflow-hidden">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="text-[12px] font-semibold text-text-main whitespace-nowrap">
-              下载池 <span className="text-text-sub font-normal">（{tasks.length} 项 · 完成 {doneCount}）</span>
+            <div className="text-[14px] font-semibold text-text-main whitespace-nowrap">
+              {t("dl.poolTitle")}{" "}
+              <span className="text-text-sub font-normal text-[13px]">
+                {t("dl.poolSummary", { count: tasks.length, done: doneCount })}
+              </span>
             </div>
             {sel.size > 0 && (
-              <div className="text-[11px] text-text-sub whitespace-nowrap">可使用 Ctrl 或 Shift 多选移除队列</div>
+              <div className="text-[12px] text-text-sub whitespace-nowrap">{t("dl.poolSelectTip")}</div>
             )}
           </div>
           {sel.size > 0 ? (
-            <button onClick={removeSelected} className="text-[12px] font-medium text-danger hover:underline shrink-0">
-              删除选中（{sel.size}）
+            <button onClick={removeSelected} className="text-[13px] font-medium text-danger hover:underline shrink-0">
+              {t("dl.poolRemoveSelected", { count: sel.size })}
             </button>
           ) : (
-            <div className="text-[11px] text-text-sub whitespace-nowrap">排队中可拖动调整优先级</div>
+            <div className="text-[12px] text-text-sub whitespace-nowrap">{t("dl.poolDragTip")}</div>
           )}
         </div>
         <div
@@ -821,8 +894,6 @@ export function DownloadPanel({
           onClick={(e) => {
             if (e.target === e.currentTarget) setSel(new Set()); // 点击列表空白取消选中
           }}
-          ref={listRef}
-          onScroll={onListScroll}
           className={`relative flex-1 min-h-0 overflow-y-auto pr-1 rounded-lg transition-colors ${
             fileOver ? "bg-brand-50 ring-2 ring-brand-400/70 ring-inset" : ""
           }`}
@@ -830,7 +901,7 @@ export function DownloadPanel({
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-text-sub/70 gap-2">
               <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" size={36} strokeWidth={1.5} />
-              <div className="text-[12px]">暂无下载任务</div>
+              <div className="text-[14px]">{t("dl.emptyState")}</div>
             </div>
           ) : (
             <>
@@ -841,7 +912,7 @@ export function DownloadPanel({
                   t={t}
                   onCtx={openCtx}
                   onPause={pause}
-                  onDelete={remove}
+                  onDelete={onDeleteClick}
                   onMode={(x, m) => setMode(x.id, m)}
                 />
               ))}
@@ -865,27 +936,24 @@ export function DownloadPanel({
                       selected={sel.has(t.id)}
                       onResume={resume}
                       onRestart={restart}
-                      onDelete={remove}
+                      onDelete={onDeleteClick}
                       onMode={(x, m) => setMode(x.id, m)}
                     />
                   );
                 })}
               </div>
-              {/* 完成：固定底部，不参与拖拽；可点选/多选；虚拟滚动只渲染可视区（长列表不卡） */}
-              <div className="relative" style={{ height: doneTasks.length * DL_DONE_H }}>
-                {visibleDone.map(({ t, i }) => (
-                  <div key={t.id} className="absolute left-0 right-0" style={{ top: i * DL_DONE_H }}>
-                    <DlRow
-                      t={t}
-                      onCtx={openCtx}
-                      onRowClick={(x, e) => handleRowClick(x, e)}
-                      selected={sel.has(t.id)}
-                      onDelete={remove}
-                      onMode={(x, m) => setMode(x.id, m)}
-                    />
-                  </div>
-                ))}
-              </div>
+              {/* 完成：固定底部，不参与拖拽；可点选/多选 */}
+              {doneTasks.map((t) => (
+                <DlRow
+                  key={t.id}
+                  t={t}
+                  onCtx={openCtx}
+                  onRowClick={(x, e) => handleRowClick(x, e)}
+                  selected={sel.has(t.id)}
+                  onDelete={onDeleteClick}
+                  onMode={(x, m) => setMode(x.id, m)}
+                />
+              ))}
             </>
           )}
         </div>
@@ -893,6 +961,26 @@ export function DownloadPanel({
 
       {/* 行右键菜单（光标位置就近弹出） */}
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctxItems()} onClose={() => setCtx(null)} />}
+
+      {/* 垃圾桶删除菜单（光标旁两行：仅移出 / 移出并删除文件或缓存） */}
+      {delMenu && <ContextMenu x={delMenu.x} y={delMenu.y} items={delItems()} onClose={() => setDelMenu(null)} />}
+
+      {/* 批量移出提示：含未完成任务 → 告知将删临时缓存（已完成保留） */}
+      {confirmRemove && (
+        <Dialog open onClose={() => setConfirmRemove(null)} title={t("dl.dlgRemoveTitle")} width={440}>
+          <p className="text-[15px] text-text-main leading-relaxed">
+            {t("dl.dlgRemoveDesc", { n: confirmRemove.n })}
+          </p>
+          <div className="flex justify-end gap-2 mt-5">
+            <Button variant="ghost" onClick={() => setConfirmRemove(null)}>
+              {t("dl.cancel")}
+            </Button>
+            <Button variant="danger" onClick={() => confirmRemove && doRemoveIds(confirmRemove.ids)}>
+              {t("dl.dlgRemoveConfirm")}
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

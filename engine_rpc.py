@@ -37,11 +37,13 @@ _REQ_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp", "engi
 
 
 def _trace(kind, obj):
-    """调试探针：引擎事件/请求落盘（tmp/，gitignored）。诊断 UI 链路时用。"""
+    """调试探针：引擎事件/请求落盘（tmp/，gitignored）。诊断 UI 链路时用。
+    每行前缀时间戳（yyyy-mm-dd HH:MM:SS.mmm），用于区分新旧进程记录。"""
     try:
         os.makedirs(os.path.dirname(_EVT_LOG), exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + f".{int(time.time() % 1 * 1000):03d}"
         with open(_EVT_LOG if kind == "ev" else _REQ_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            f.write(ts + " " + json.dumps(obj, ensure_ascii=False) + "\n")
     except Exception:
         pass
 
@@ -119,27 +121,37 @@ def _dl_event(kind, task):
     })
 
 
+def _safe_int(val, default=-1):
+    try:
+        if val is None:
+            return default
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+_dl_pool_workers = [3]
+
+
 def _get_dl_pool(workers):
     global _dl_pool
+    target = max(1, _safe_int(workers, 3))
     with _dl_pool_lock:
         if _dl_pool is None:
             def on_update(evt):
                 kind, task = evt
                 _dl_event(kind, task)
             _dl_pool = eazyvid.DownloadPool(on_update, lambda msg: emit({"ev": "log", "msg": msg}),
-                                            max_concurrent=max(1, int(workers or 3)))
+                                            max_concurrent=target)
+            _dl_pool_workers[0] = target
         else:
-            # workers 变化：重建信号量（简单起见：换新池，旧任务已完成/被清理）
-            if int(workers or 3) != _dl_pool.sem._value:
-                old = _dl_pool
-                def on_update2(evt):
-                    kind, task = evt
-                    _dl_event(kind, task)
-                _dl_pool = eazyvid.DownloadPool(on_update2, lambda msg: emit({"ev": "log", "msg": msg}),
-                                                max_concurrent=max(1, int(workers or 3)))
-                for t in list(old.tasks):
-                    if t.state in ("waiting", "downloading"):
-                        eazyvid._kill_proc_tree(t.proc)
+            old_target = _dl_pool_workers[0]
+            if target != old_target:
+                _dl_pool_workers[0] = target
+                diff = target - old_target
+                if diff > 0:
+                    for _ in range(diff):
+                        _dl_pool.sem.release()
         return _dl_pool
 
 
@@ -157,8 +169,9 @@ def _cmd_dl_add(req):
 
 
 def _cmd_dl_pause(req):
+    tid = _safe_int(req.get("task_id"), -1)
     for t in list((_dl_pool or []).tasks if _dl_pool else []):
-        if t.task_id == int(req.get("task_id", -1)):
+        if t.task_id == tid:
             t.pause()
             reply(req["id"], ok=True)
             return
@@ -166,8 +179,9 @@ def _cmd_dl_pause(req):
 
 
 def _cmd_dl_resume(req):
+    tid = _safe_int(req.get("task_id"), -1)
     for t in list((_dl_pool or []).tasks if _dl_pool else []):
-        if t.task_id == int(req.get("task_id", -1)):
+        if t.task_id == tid:
             t.resume()
             reply(req["id"], ok=True)
             return
@@ -176,8 +190,9 @@ def _cmd_dl_resume(req):
 
 def _cmd_dl_retry(req):
     """失败任务重新下载：重置进度、清临时缓存、排入等待队列尾"""
+    tid = _safe_int(req.get("task_id"), -1)
     for t in list((_dl_pool or []).tasks if _dl_pool else []):
-        if t.task_id == int(req.get("task_id", -1)):
+        if t.task_id == tid:
             t.retry()
             reply(req["id"], ok=True)
             return
@@ -185,10 +200,26 @@ def _cmd_dl_retry(req):
 
 
 def _cmd_dl_remove(req):
+    delete_file = bool(req.get("delete_file", False))
+    tid = _safe_int(req.get("task_id"), -1)
     for t in list((_dl_pool or []).tasks if _dl_pool else []):
-        if t.task_id == int(req.get("task_id", -1)):
+        if t.task_id == tid:
+            out_path = t.out_path
+            # _dl_pool.remove 已封装：杀进程、释放信号量、删 tmpdir
             if _dl_pool:
                 _dl_pool.remove(t)
+            else:
+                eazyvid._kill_proc_tree(t.proc)
+                if t.tmpdir and os.path.isdir(t.tmpdir):
+                    import shutil as _sh
+                    _sh.rmtree(t.tmpdir, ignore_errors=True)
+            if delete_file and out_path and os.path.exists(out_path):
+                for _ in range(3):
+                    try:
+                        os.remove(out_path)
+                        break
+                    except OSError:
+                        time.sleep(0.2)
             emit({"ev": "dl", "task_id": t.task_id, "state": "removed", "pct": 0, "got": 0,
                   "total": 0, "speed": "", "title": t.title or "", "out": "", "kind": "removed"})
             reply(req["id"], ok=True)
@@ -249,8 +280,9 @@ def _compress_worker(req, rec):
     except Exception as e:
         emit({"ev": "cmp", "id": rec["id"], "state": "failed", "error": str(e), "mode": mode})
         return
-    with _cmp_lock:
-        _cmp_running.pop(rec["id"], None)
+    finally:
+        with _cmp_lock:
+            _cmp_running.pop(rec["id"], None)
     if not ok:
         # 主动终止（cmp_stop 已杀进程并发 stopped）时不发 failed，避免覆盖终止态
         if rec.get("stopped"):
@@ -266,7 +298,10 @@ def _compress_worker(req, rec):
         emit({"ev": "cmp", "id": rec["id"], "state": "skipped", "orig": orig, "mode": mode})
         return
     # 统计：原大小 / 输出大小 / 压缩比
-    orig = os.path.getsize(path)
+    try:
+        orig = os.path.getsize(path)
+    except OSError:
+        orig = 0
     out_sz = os.path.getsize(out) if out and os.path.exists(out) else 0
     ratio = round((1 - out_sz / orig) * 100, 1) if orig and out_sz else 0
     if overwrite and out and os.path.abspath(out) != os.path.abspath(path):
@@ -287,26 +322,51 @@ def _cmd_cmp_scan_dir(req):
     if root and os.path.isdir(root):
         for dp, _dn, fn in os.walk(root):
             for f in fn:
+                # 压缩输出（xxx_compressed.mp4）与源文件同目录，不重新入队
+                if f.lower().endswith("_compressed.mp4"):
+                    continue
                 if os.path.splitext(f)[1].lower() in exts:
                     found.append(os.path.join(dp, f))
     reply(req["id"], ok=True, files=found)
 
 
 def _cmd_cmp_add(req):
+    path = req.get("path", "")
+    limit = req.get("limit", 0)   # UI 传入并发上限；0 = 不限（脚本/直调）
     with _cmp_lock:
+        # 同路径去重：同一源文件已在压缩（未结束）时拒绝重复启动——
+        # 兜底 UI 补位竞态/拖入重复（曾致两个 ffmpeg 同时压同一个输出文件）
+        for _rid, _rec in _cmp_running.items():
+            if _rec.get("path") == path:
+                reply(req["id"], ok=True, cmp_id=_rec["id"], dup=True)
+                return
+        # 并发硬闸门：正在压缩（未 stopped）的任务数已达上限 → 拒绝启动（UI 保持 queued 等补位）
+        if limit > 0:
+            running = sum(1 for _r in _cmp_running.values() if not _r.get("stopped"))
+            if running >= limit:
+                reply(req["id"], ok=True, limit=True)
+                return
         _cmp_seq[0] += 1
         cid = _cmp_seq[0]
-        rec = {"proc": None, "id": cid}   # 同一 dict 同时注册进 _cmp_running 和传给 worker
+        rec = {"proc": None, "id": cid, "path": path}   # 同一 dict 同时注册进 _cmp_running 和传给 worker
         _cmp_running[cid] = rec
     threading.Thread(target=_compress_worker, args=(req, rec), daemon=True).start()
     reply(req["id"], ok=True, cmp_id=cid)  # cmp_id = 压缩任务 id（避免与 RPC 响应 id 键冲突）
 
 
 def _cmd_cmp_stop(req):
-    cid = req.get("cmp_id", req.get("id"))   # 参数键用 cmp_id，避免与 RPC 请求 id 键冲突
+    cid = req.get("cmp_id")
+    if cid is None:
+        cid = req.get("task_id")
+    cid = _safe_int(cid, None)
+    if cid is None:
+        cid = _safe_int(req.get("id"), None)
     with _cmp_lock:
         rec = _cmp_running.get(cid)
-    if rec and rec.get("proc") is not None:
+    if rec is None:
+        reply(req["id"], ok=False, error="压缩任务不存在或已结束")
+        return
+    if rec.get("proc") is not None:
         eazyvid._kill_proc_tree(rec["proc"])
         rec["stopped"] = True   # 标记主动终止：worker 察觉进程被杀时不得再发 failed 覆盖 stopped
         # 终止即删半成品输出（用户规则：终止任务应删除压缩一半的文件）
@@ -319,7 +379,11 @@ def _cmd_cmp_stop(req):
         emit({"ev": "cmp", "id": cid, "state": "stopped", "mode": req.get("mode", "")})
         reply(req["id"], ok=True)
         return
-    reply(req["id"], ok=False, error="压缩任务不存在或已结束")
+    # 竞态窗口：cmp_add 刚回，worker 尚未 Popen（proc 仍为 None）。
+    # 先打 stopped 标记——compress_video 的 Popen 补杀保险看到该标记会立即杀进程，不放过。
+    rec["stopped"] = True
+    emit({"ev": "cmp", "id": cid, "state": "stopped", "mode": req.get("mode", "")})
+    reply(req["id"], ok=True)
 
 
 def _ver_key(v):
@@ -333,36 +397,40 @@ def _ver_key(v):
 def _cmd_ffmpeg_check(req):
     """检查 ffmpeg 是否有新的稳定版：本地版本 vs ffmpeg.org 官方 release 最新稳定版。
     本地为 nightly/自编译（版本号 N-xxx）时也提示（建议换稳定版）。
-    网络失败/解析失败时静默返回（不打扰用户，newer=False）。"""
-    cur = ""
-    cur_nightly = False
-    try:
-        ff = os.path.join(eazyvid.SCRIPT_DIR, "ffmpeg.exe")
-        r = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
-                           creationflags=NO_WINDOW | 0x00004000)
-        m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
-        if m:
-            cur = m.group(1)
-        else:
-            m = re.search(r"ffmpeg version (N-\d+[^\s]*)", r.stdout or "")
+    网络失败/解析失败时静默返回（不打扰用户，newer=False）。
+    后台线程执行，绝不阻塞 RPC 主循环。"""
+    def _worker():
+        cur = ""
+        cur_nightly = False
+        try:
+            ff = os.path.join(eazyvid.SCRIPT_DIR, "ffmpeg.exe")
+            r = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
+                               creationflags=NO_WINDOW | 0x00004000)
+            m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
             if m:
                 cur = m.group(1)
-                cur_nightly = True
-    except Exception:
-        pass
-    latest = ""
-    try:
-        import urllib.request
-        hreq = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
-        html = urllib.request.urlopen(hreq, timeout=10).read().decode("utf-8", "replace")
-        vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
-        if vers:
-            latest = max(vers, key=_ver_key)
-    except Exception:
-        pass
-    # 本地是 nightly → 只要存在稳定版就提示；本地是稳定版 → 版本号严格更大才提示
-    newer = bool(latest and ((cur_nightly and cur) or (cur and _ver_key(latest) > _ver_key(cur))))
-    reply(req.get("id"), ok=True, current=cur, latest=latest, newer=newer, nightly=cur_nightly)
+            else:
+                m = re.search(r"ffmpeg version (N-\d+[^\s]*)", r.stdout or "")
+                if m:
+                    cur = m.group(1)
+                    cur_nightly = True
+        except Exception:
+            pass
+        latest = ""
+        try:
+            import urllib.request
+            hreq = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(hreq, timeout=10).read().decode("utf-8", "replace")
+            vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
+            if vers:
+                latest = max(vers, key=_ver_key)
+        except Exception:
+            pass
+        # 本地是 nightly → 只要存在稳定版就提示；本地是稳定版 → 版本号严格更大才提示
+        newer = bool(latest and ((cur_nightly and cur) or (cur and _ver_key(latest) > _ver_key(cur))))
+        reply(req.get("id"), ok=True, current=cur, latest=latest, newer=newer, nightly=cur_nightly)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _cmd_ffmpeg_update(req):
@@ -509,6 +577,37 @@ def _cmd_quit(req=None):
     emit({"ev": "bye"})
 
 
+def _kill_stale_ffmpeg():
+    """启动时清理上一次会话残留的压缩 ffmpeg（强杀/断电留下的孤儿进程，UI 无法再 stop）：
+    特征 = 命令行含 _compressed 输出且带 -progress（本项目压缩进程）。
+    正常退出（托盘退出）时 Engine::shutdown 已杀树，此处扫描不到任何进程，无副作用。"""
+    try:
+        ps = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='ffmpeg.exe'\" | "
+             "ForEach-Object { $_.ProcessId.ToString() + '|' + $_.CommandLine }"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=NO_WINDOW, timeout=20)
+        for line in (ps.stdout or "").splitlines():
+            line = line.strip()
+            if "|" not in line:
+                continue
+            pid_s, cmdline = line.split("|", 1)
+            if not cmdline or "_compressed" not in cmdline.lower() or "-progress" not in cmdline.lower():
+                continue
+            try:
+                pid = int(pid_s)
+            except ValueError:
+                continue
+            if pid == os.getpid():
+                continue
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True, creationflags=NO_WINDOW, timeout=10)
+            _trace("ev", {"ev": "cleanup", "killed_stale_ffmpeg": pid})
+    except Exception:
+        pass
+
+
 def _cleanup_stale_tmpdirs():
     """启动时清理意外中断（断电/强杀）残留的下载临时目录：>10 分钟、非当前进程的 .eazyvid_ 目录"""
     try:
@@ -536,8 +635,27 @@ def _cleanup_stale_tmpdirs():
         pass
 
 
+def _cmd_system_shutdown(req):
+    delay = _safe_int(req.get("delay"), 60)
+    try:
+        subprocess.Popen(["shutdown", "/s", "/t", str(delay)], creationflags=NO_WINDOW)
+        reply(req["id"], ok=True)
+    except Exception as e:
+        reply(req["id"], ok=False, error=str(e))
+
+
+def _cmd_cancel_shutdown(req):
+    try:
+        subprocess.Popen(["shutdown", "/a"], creationflags=NO_WINDOW)
+        reply(req["id"], ok=True)
+    except Exception as e:
+        reply(req["id"], ok=False, error=str(e))
+
+
 def main():
-    # 启动清理：意外中断（断电/强杀）残留的下载 .eazyvid_ 临时目录
+    # 启动清理：① 上次会话残留的压缩 ffmpeg 孤儿（强杀/断电留下，UI 无法再 stop）
+    #            ② 意外中断残留的下载 .eazyvid_ 临时目录
+    _kill_stale_ffmpeg()
     _cleanup_stale_tmpdirs()
     emit({"ev": "ready", "pid": os.getpid(),
           "ytdlp": os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt-dlp.exe"),
@@ -589,7 +707,11 @@ def main():
             elif cmd == "ffmpeg_check":
                 _cmd_ffmpeg_check(req)
             elif cmd == "ffmpeg_update":
-                _cmd_ffmpeg_update(req)
+                threading.Thread(target=_cmd_ffmpeg_update, args=(req,), daemon=True).start()
+            elif cmd == "system_shutdown":
+                _cmd_system_shutdown(req)
+            elif cmd == "cancel_shutdown":
+                _cmd_cancel_shutdown(req)
             elif cmd == "quit":
                 _cmd_quit()
                 break
