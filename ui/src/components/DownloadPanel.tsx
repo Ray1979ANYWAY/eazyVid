@@ -327,6 +327,57 @@ export function DownloadPanel({
   const tasksRef = useRef<DlTask[]>([]);
   tasksRef.current = tasks;
 
+  /* 智能剪贴板感知：自动识别复制的视频 URL 并提示一键填入 */
+  const [clipUrl, setClipUrl] = useState<string | null>(null);
+  const clipDismissedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const checkClipboard = async () => {
+      try {
+        if (!navigator.clipboard?.readText) return;
+        const text = (await navigator.clipboard.readText()).trim();
+        if (!text) return;
+        const extracted = extractUrl(text);
+        if (extracted && extracted !== url && extracted !== clipDismissedRef.current) {
+          setClipUrl(extracted);
+        }
+      } catch {
+        /* clipboard 权限受限时忽略 */
+      }
+    };
+    window.addEventListener("focus", checkClipboard);
+    void checkClipboard();
+    return () => window.removeEventListener("focus", checkClipboard);
+  }, [active, url]);
+
+  /* 全局 Ctrl+V 快捷嗅探：焦点不在输入框时按下 Ctrl+V 自动填入并聚焦 */
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        const target = e.target as HTMLElement | null;
+        if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) {
+          return;
+        }
+        void (async () => {
+          try {
+            const text = await navigator.clipboard.readText();
+            const extracted = extractUrl(text) || text.trim();
+            if (extracted) {
+              setUrl(extracted);
+              inputRef.current?.focus();
+            }
+          } catch {
+            /* ignore */
+          }
+        })();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active]);
+
   /* 排序辅助：分辨率数字 / 大小字节数 */
   const resNum = (s: string) => {
     const m = s.match(/(\d+)/);
@@ -769,6 +820,40 @@ export function DownloadPanel({
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-ok" />
           {t("dl.hint")}
         </div>
+
+        {/* 智能剪贴板感知提示条 */}
+        {clipUrl && (
+          <div className="mt-2.5 px-3 py-2 bg-brand-50/80 border border-brand-200/80 rounded-lg flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2 text-[13px] text-brand-900 truncate mr-2 min-w-0">
+              <span className="shrink-0 text-[14px]">📋</span>
+              <span className="font-medium text-text-sub shrink-0">{t("dl.clipDetected")}</span>
+              <span className="font-mono text-brand-700 bg-white/90 px-2 py-0.5 rounded border border-brand-200/60 truncate max-w-[380px]">
+                {clipUrl}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={() => {
+                  setUrl(clipUrl);
+                  setClipUrl(null);
+                  inputRef.current?.focus();
+                }}
+              >
+                {t("dl.clipApply")}
+              </Button>
+              <button
+                onClick={() => {
+                  clipDismissedRef.current = clipUrl;
+                  setClipUrl(null);
+                }}
+                className="text-text-sub hover:text-text-main text-[13px] px-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 格式列表（常驻区域：未探测时为空态提示；超 300px 内容区滚动，表头固定） */}
@@ -899,9 +984,124 @@ export function DownloadPanel({
           }`}
         >
           {tasks.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-text-sub/70 gap-2">
-              <Icon d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" size={36} strokeWidth={1.5} />
-              <div className="text-[14px]">{t("dl.emptyState")}</div>
+            <div className="h-full flex flex-col items-center justify-center p-6 text-center select-none">
+              {/* 现代通用流媒体矢量抽象插画（方案 B：艺术化规避商标侵权） */}
+              <div className="relative w-36 h-36 mb-4 flex items-center justify-center">
+                {/* 柔和呼吸渐变底环 */}
+                <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-brand-500/20 via-blue-400/15 to-purple-400/20 blur-xl" />
+
+                {/* 悬浮主卡片 */}
+                <div className="relative w-28 h-24 bg-white/95 backdrop-blur-md rounded-2xl border border-border-soft shadow-lg p-2.5 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <div className="flex gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-200" />
+                    </div>
+                    <div className="flex items-center gap-0.5">
+                      <span className="w-1 h-3 rounded-full bg-brand-500/60" />
+                      <span className="w-1 h-4 rounded-full bg-brand-600" />
+                      <span className="w-1 h-2 rounded-full bg-brand-400/50" />
+                    </div>
+                  </div>
+
+                  <div className="w-9 h-9 mx-auto rounded-xl bg-gradient-to-br from-brand-600 to-indigo-700 text-white flex items-center justify-center shadow-md shadow-brand-500/25">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+
+                  <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+                    <div className="bg-gradient-to-r from-brand-500 to-indigo-500 h-full w-2/3 rounded-full" />
+                  </div>
+                </div>
+
+                {/* 右上角流媒体链接节点微标 */}
+                <div className="absolute -top-1 -right-1 w-8 h-8 rounded-xl bg-white border border-border-soft shadow-sm flex items-center justify-center text-brand-600">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                </div>
+
+                {/* 左下角高清规格标签 */}
+                <div className="absolute -bottom-1 -left-1 px-1.5 py-0.5 rounded-md bg-white border border-border-soft shadow-xs text-[10px] font-bold tracking-wider text-indigo-700 font-mono">
+                  4K HDR
+                </div>
+              </div>
+
+              {/* 标题与快捷提示 */}
+              <h3 className="text-[16px] font-bold text-text-main tracking-tight">
+                {t("dl.emptyTitle")}
+              </h3>
+              <p className="mt-1.5 text-[13px] text-text-sub max-w-md leading-relaxed">
+                {t("dl.emptyDesc")}
+              </p>
+
+              {/* 纯文本中性合规胶囊 Tag（方案 A：无商标版权风险） */}
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2 max-w-lg">
+                <span className="text-[12px] text-text-sub/70 font-medium mr-1">
+                  {t("dl.emptyTagSupport")}
+                </span>
+
+                <span
+                  onClick={() => {
+                    setUrl("https://www.youtube.com/watch?v=");
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  YouTube
+                </span>
+
+                <span
+                  onClick={() => {
+                    setUrl("https://www.bilibili.com/video/");
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                  Bilibili 哔哩哔哩
+                </span>
+
+                <span
+                  onClick={() => {
+                    setUrl("https://twitter.com/");
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                  X / Twitter
+                </span>
+
+                <span
+                  onClick={() => {
+                    setUrl("https://www.tiktok.com/");
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500" />
+                  TikTok 抖音
+                </span>
+
+                <span
+                  onClick={() => {
+                    inputRef.current?.focus();
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  m3u8 / MP4 直链
+                </span>
+
+                <span className="px-2.5 py-1 rounded-full bg-surface border border-border-soft text-[12px] text-text-sub font-medium">
+                  {t("dl.emptyTagMore")}
+                </span>
+              </div>
             </div>
           ) : (
             <>

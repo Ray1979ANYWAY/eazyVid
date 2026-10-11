@@ -309,6 +309,40 @@ function App() {
     return () => clearInterval(timer);
   }, [shutdownPending]);
 
+  /* 全局任务完成提示（未开启自动关机时，在应用右下角浮动 Toast + 触发系统通知） */
+  const [completeToast, setCompleteToast] = useState<{ open: boolean; gain: string } | null>(null);
+
+  useEffect(() => {
+    if (shutdown || !hadTasksRef.current || totalActive > 0) return;
+    const timer = setTimeout(() => {
+      if (hadTasksRef.current && totalActive === 0 && !shutdown) {
+        hadTasksRef.current = false;
+        const gainStr = (cmpGain / 1024 ** 3).toFixed(2);
+        setCompleteToast({ open: true, gain: gainStr });
+        try {
+          if (typeof window !== "undefined" && "Notification" in window) {
+            if (Notification.permission === "granted") {
+              new Notification(t("toast.title"), {
+                body: t("toast.body", { gain: gainStr }),
+              });
+            } else if (Notification.permission !== "denied") {
+              void Notification.requestPermission().then((p) => {
+                if (p === "granted") {
+                  new Notification(t("toast.title"), {
+                    body: t("toast.body", { gain: gainStr }),
+                  });
+                }
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [shutdown, totalActive, cmpGain, t]);
+
   return (
     <I18nProvider setting={settings.lang}>
       <TipProvider>
@@ -537,6 +571,36 @@ function App() {
           </Button>
         </div>
       </Dialog>
+      {/* 全队列任务完成应用内浮动 Toast（未开自动关机时优雅呈现） */}
+      {completeToast?.open && (
+        <div className="fixed bottom-16 right-5 z-50 w-80 bg-white/95 backdrop-blur-md border border-border-soft rounded-2xl shadow-xl p-3.5 flex items-start gap-3 transition-all animate-in fade-in slide-in-from-bottom-2">
+          <div className="w-8 h-8 rounded-xl bg-[#14185e] flex items-center justify-center shrink-0 shadow-xs">
+            <svg width="18" height="18" viewBox="0 0 40 40" fill="none">
+              <path d="M12 9 L24 20 L12 31 Z" fill="#60A5FA" />
+              <path d="M22 14 L28 20 L22 26" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] font-bold text-text-main">
+              {t("toast.title")}
+            </div>
+            <p className="mt-1 text-[12px] text-text-sub leading-snug">
+              {t("toast.body", { gain: completeToast.gain })}
+            </p>
+            <div className="mt-2.5 flex justify-end">
+              <Button size="sm" onClick={() => setCompleteToast(null)}>
+                {t("toast.dismiss")}
+              </Button>
+            </div>
+          </div>
+          <button
+            onClick={() => setCompleteToast(null)}
+            className="text-text-sub hover:text-text-main text-[13px] p-0.5 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       </TipProvider>
     </I18nProvider>
   );
