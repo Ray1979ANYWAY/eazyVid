@@ -99,6 +99,10 @@ const DICT = {
   "quit.cancel": { "zh-CN": "取消", en: "Cancel" },
   "quit.confirm": { "zh-CN": "确定退出", en: "Exit Anyway" },
 
+  // System Tray Menu
+  "tray.show": { "zh-CN": "显示主窗口", en: "Show Window" },
+  "tray.quit": { "zh-CN": "退出", en: "Exit" },
+
   // Settings Dialog
   "settings.title": { "zh-CN": "设置", en: "Settings" },
   "settings.lang": { "zh-CN": "界面语言", en: "Display Language" },

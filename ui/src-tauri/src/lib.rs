@@ -7,9 +7,31 @@ use tauri::{
     Emitter, Manager, WindowEvent,
 };
 
+use std::sync::Mutex;
+
+struct TrayMenuItems {
+    show: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn update_tray_lang(
+    show_text: String,
+    quit_text: String,
+    state: tauri::State<'_, Mutex<Option<TrayMenuItems>>>,
+) -> Result<(), String> {
+    if let Ok(guard) = state.lock() {
+        if let Some(items) = guard.as_ref() {
+            let _ = items.show.set_text(show_text);
+            let _ = items.quit.set_text(quit_text);
+        }
+    }
+    Ok(())
 }
 
 /// 前端确认退出（任务进行中的警告已由前端弹窗确认）→ 清引擎进程树 + 退出
@@ -37,6 +59,7 @@ pub fn run() {
             show_main(app);
         }))
         .manage(Engine::default())
+        .manage(Mutex::new(None::<TrayMenuItems>))
         .setup(|app| {
             if let Err(e) = Engine::spawn(app.handle()) {
                 eprintln!("引擎启动失败: {e}");
@@ -45,6 +68,17 @@ pub fn run() {
             let show_i = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            // 保存菜单项引用以便动态切换语言
+            if let Some(state) = app.try_state::<Mutex<Option<TrayMenuItems>>>() {
+                if let Ok(mut guard) = state.lock() {
+                    *guard = Some(TrayMenuItems {
+                        show: show_i.clone(),
+                        quit: quit_i.clone(),
+                    });
+                }
+            }
+
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("eazyVid")
@@ -87,7 +121,8 @@ pub fn run() {
             greet,
             engine::engine_send,
             engine::engine_restart,
-            quit_confirmed
+            quit_confirmed,
+            update_tray_lang
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

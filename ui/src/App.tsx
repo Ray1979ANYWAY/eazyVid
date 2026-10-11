@@ -247,6 +247,14 @@ function App() {
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     translate(currLang, key, params);
 
+  /* 系统托盘菜单文字跟随界面语言动态更新 */
+  useEffect(() => {
+    void invoke("update_tray_lang", {
+      showText: translate(currLang, "tray.show"),
+      quitText: translate(currLang, "tray.quit"),
+    });
+  }, [currLang]);
+
   /* 一键更新：下载稳定版 → 自动替换（引擎内备份旧版，失败回滚） */
   const doUpdate = async () => {
     setFfmpegConfirm(false);
