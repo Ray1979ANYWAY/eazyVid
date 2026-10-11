@@ -124,6 +124,10 @@ export function Toggle({
 }
 
 /* ============ 下拉选择 ============ */
+/* ============ 自定义下拉 ============
+   原生 select 的 option 无法自定义底色，压缩模式需要"展开即可见紫色收益阶梯"，
+   故重写为自定义下拉：触发按钮显示当前值底色，展开面板每行带各自色阶。 */
+export type SelectOption = { value: string; label: string; tint?: string };
 export function Select({
   value,
   onChange,
@@ -134,27 +138,86 @@ export function Select({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  options: SelectOption[];
   disabled?: boolean;
   className?: string;
-  /* 底色（内联样式，覆盖默认白底）：压缩模式下拉用紫色色阶表示压缩程度 */
+  /* 触发按钮底色（兼容旧调用；缺省时取当前选中项自身的 tint） */
   tint?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [up, setUp] = useState(false);
+  const cur = options.find((o) => o.value === value);
+  const curTint = tint || cur?.tint || "";
+
+  /* 点击外部关闭 + 空间不足向上展开 */
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      const est = options.length * 30 + 12;
+      setUp(window.innerHeight - r.bottom < Math.min(est, 200));
+    }
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, options.length]);
+
   return (
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      style={tint ? { background: tint } : undefined}
-      className={`h-7 rounded-md border border-border-soft bg-white px-2 text-[12px] text-text-main
-        focus:outline-2 focus:outline-brand-500 disabled:opacity-40 cursor-pointer ${className}`}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+    <div ref={ref} className={`relative ${disabled ? "pointer-events-none opacity-40" : ""} ${className}`}>
+      {/* 触发按钮：底色 = 当前选中模式色阶 */}
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((o) => !o);
+          }
+        }}
+        style={curTint ? { background: curTint } : undefined}
+        className={`h-7 rounded-md border border-border-soft bg-white px-2 text-[12px] text-text-main
+          flex items-center justify-between gap-1 cursor-pointer hover:border-brand-400
+          focus:outline-2 focus:outline-brand-500 ${open ? "border-brand-400" : ""}`}
+      >
+        <span className="truncate">{cur?.label ?? value}</span>
+        <span className="text-[10px] text-text-soft leading-none shrink-0">▾</span>
+      </div>
+      {/* 展开面板：每行底色 = 该模式色阶（none/无 tint 为白底） */}
+      {open && (
+        <div
+          className={`absolute z-[60] min-w-full max-h-[200px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg py-1 ${up ? "bottom-full mb-1" : "top-full mt-1"}`}
+        >
+          {options.map((o) => (
+            <div
+              key={o.value}
+              role="option"
+              aria-selected={o.value === value}
+              style={o.tint ? { background: o.tint } : undefined}
+              onClick={() => {
+                onChange(o.value);
+                setOpen(false);
+              }}
+              className={`px-2 py-[5px] text-[12px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
+                ${o.value === value ? "font-semibold text-text-main" : "text-text-main"}`}
+            >
+              <span>{o.label}</span>
+              {o.value === value && <span className="text-[10px] text-brand-600 leading-none">✓</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

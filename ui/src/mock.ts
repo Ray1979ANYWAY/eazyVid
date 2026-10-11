@@ -69,13 +69,6 @@ export const MOCK_CMP: CmpTask[] = [
   { id: "c7", name: "720p 修复版 - 老友记特别篇.mkv", status: "stopped", orig: 892 * 1024 ** 2, mode: "默认" },
 ];
 
-export const COMPRESS_MODES = [
-  { value: "default", label: "默认（均衡）" },
-  { value: "hq", label: "画质优先" },
-  { value: "fast", label: "速度优先" },
-  { value: "av1", label: "AV1 极限压缩" },
-];
-
 /* 压缩模式下拉底色：紫色色阶表示压缩程度（品牌紫 #7B2CBF 呼应，统一 30% 透明度）。
    画质优先（体积收益最小）最浅 → 默认 → 速度优先 → AV1 极限压缩（最狠）最深；
    最深即图标品牌紫，避免更深。 */
@@ -85,3 +78,10 @@ export const MODE_TINTS: Record<string, string> = {
   fast: "rgba(157, 113, 205, 0.30)",
   av1: "rgba(123, 44, 191, 0.30)",
 };
+
+export const COMPRESS_MODES = [
+  { value: "default", label: "默认（均衡）", tint: MODE_TINTS.default },
+  { value: "hq", label: "画质优先", tint: MODE_TINTS.hq },
+  { value: "fast", label: "速度优先", tint: MODE_TINTS.fast },
+  { value: "av1", label: "AV1 极限压缩", tint: MODE_TINTS.av1 },
+];
