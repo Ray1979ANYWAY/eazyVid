@@ -431,7 +431,14 @@ export function CompressPanel({
         setAnchor(t.id);
       }
     } else {
-      setSel(new Set([t.id]));
+      // 普通点击：已选中该行 → 取消选中（再点一下取消）；未选中 → 单选
+      setSel((prev) => {
+        if (prev.size === 1 && prev.has(t.id)) {
+          setAnchor(null);
+          return new Set();
+        }
+        return new Set([t.id]);
+      });
       setAnchor(t.id);
     }
   };
