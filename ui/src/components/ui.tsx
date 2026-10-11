@@ -126,7 +126,8 @@ export function Toggle({
 /* ============ 下拉选择 ============ */
 /* ============ 自定义下拉 ============
    原生 select 的 option 无法自定义底色，压缩模式需要"展开即可见紫色收益阶梯"，
-   故重写为自定义下拉：触发按钮显示当前值底色，展开面板每行带各自色阶。 */
+   故重写为自定义下拉：触发按钮显示当前值底色，展开面板每行带各自色阶。
+   面板用 createPortal 渲染到 body 顶层（fixed 定位），避免被列表容器 overflow 裁剪遮挡。 */
 export type SelectOption = { value: string; label: string; tint?: string };
 export function Select({
   value,
@@ -146,31 +147,52 @@ export function Select({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const [up, setUp] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; bottom: number; left: number; width: number; up: boolean }>({
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: 120,
+    up: false,
+  });
   const cur = options.find((o) => o.value === value);
   const curTint = tint || cur?.tint || "";
 
-  /* 点击外部关闭 + 空间不足向上展开 */
+  /* 点击外部（容器/面板之外）关闭 + Esc 关闭 */
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const n = e.target as Node;
+      if (ref.current && ref.current.contains(n)) return;
+      if (panelRef.current && panelRef.current.contains(n)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    if (ref.current) {
-      const r = ref.current.getBoundingClientRect();
-      const est = options.length * 30 + 12;
-      setUp(window.innerHeight - r.bottom < Math.min(est, 200));
-    }
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, options.length]);
+  }, [open]);
+
+  const toggle = () => {
+    if (disabled) return;
+    if (!open && ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      const est = Math.min(options.length * 30 + 12, 200);
+      setPos({
+        top: r.bottom + 4,
+        bottom: window.innerHeight - r.top + 4,
+        left: r.left,
+        width: r.width,
+        up: window.innerHeight - r.bottom < est,
+      });
+    }
+    setOpen((o) => !o);
+  };
 
   return (
     <div ref={ref} className={`relative ${disabled ? "pointer-events-none opacity-40" : ""} ${className}`}>
@@ -178,11 +200,11 @@ export function Select({
       <div
         role="button"
         tabIndex={disabled ? -1 : 0}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setOpen((o) => !o);
+            toggle();
           }
         }}
         style={curTint ? { background: curTint } : undefined}
@@ -193,30 +215,39 @@ export function Select({
         <span className="truncate">{cur?.label ?? value}</span>
         <span className="text-[10px] text-text-soft leading-none shrink-0">▾</span>
       </div>
-      {/* 展开面板：每行底色 = 该模式色阶（none/无 tint 为白底） */}
-      {open && (
-        <div
-          className={`absolute z-[60] min-w-full max-h-[200px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg py-1 ${up ? "bottom-full mb-1" : "top-full mt-1"}`}
-        >
-          {options.map((o) => (
-            <div
-              key={o.value}
-              role="option"
-              aria-selected={o.value === value}
-              style={o.tint ? { background: o.tint } : undefined}
-              onClick={() => {
-                onChange(o.value);
-                setOpen(false);
-              }}
-              className={`px-2 py-[5px] text-[12px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
-                ${o.value === value ? "font-semibold text-text-main" : "text-text-main"}`}
-            >
-              <span>{o.label}</span>
-              {o.value === value && <span className="text-[10px] text-brand-600 leading-none">✓</span>}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* 展开面板：portal 到 body 顶层，每行底色 = 该模式色阶（none/无 tint 为白底） */}
+      {open &&
+        createPortal(
+          <div
+            ref={panelRef}
+            role="listbox"
+            className={`fixed z-[100] max-h-[200px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg py-1 ${pos.up ? "mb-1" : "mt-1"}`}
+            style={{
+              left: pos.left,
+              minWidth: pos.width,
+              ...(pos.up ? { bottom: pos.bottom } : { top: pos.top }),
+            }}
+          >
+            {options.map((o) => (
+              <div
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                style={o.tint ? { background: o.tint } : undefined}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+                className={`px-2 py-[5px] text-[12px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
+                  ${o.value === value ? "font-semibold text-text-main" : "text-text-main"}`}
+              >
+                <span>{o.label}</span>
+                {o.value === value && <span className="text-[10px] text-brand-600 leading-none">✓</span>}
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
