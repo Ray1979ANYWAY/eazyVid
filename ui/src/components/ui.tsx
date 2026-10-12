@@ -363,12 +363,14 @@ export function Dialog({
   onClose,
   title,
   children,
+  footer,
   width = 520,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   children: ReactNode;
+  footer?: ReactNode;
   width?: number;
 }) {
   const openTs = useRef(Date.now());
@@ -402,7 +404,8 @@ export function Dialog({
             </svg>
           </button>
         </div>
-        <div className="p-5 overflow-y-auto">{children}</div>
+        <div className="p-5 overflow-y-auto flex-1 min-h-0">{children}</div>
+        {footer && <div className="shrink-0">{footer}</div>}
       </div>
     </div>
   );
