@@ -170,24 +170,27 @@ export function SettingsDialog({
           </div>
         </FieldRow>
 
-        <div className="h-px bg-border-soft" />
-
-        {/* 覆盖 + 封面（仅"与原文件同目录"时可开覆盖；覆盖开时封面才可选） */}
-        <FieldRow label={t("settings.overwrite")} disabled={!outSame}>
-          <Toggle checked={overwrite} onChange={(v) => set({ overwrite: v })} disabled={!outSame} />
-        </FieldRow>
-        <FieldRow label="" disabled={!overwrite}>
-          <div className="flex items-start gap-2.5 flex-1 min-w-0">
-            <div className="pt-0.5 shrink-0">
-              <Toggle checked={cover} onChange={(v) => set({ cover: v })} disabled={!overwrite} />
-            </div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 min-w-0">
-              <span className="text-[14px] text-text-main shrink-0">{t("settings.coverPrefix")}</span>
-              <NumberField value={settings.coverSec} onChange={(v) => set({ coverSec: v })} min={0} max={9999} disabled={!overwrite} />
-              <span className="text-[14px] text-text-main leading-snug break-words">{t("settings.coverSuffix")}</span>
-            </div>
-          </div>
-        </FieldRow>
+        {/* 覆盖 + 封面（仅"与原文件同目录"时可用并显示；指定目录时整块隐藏，面板无需纵向滚动条） */}
+        {outSame && (
+          <>
+            <div className="h-px bg-border-soft" />
+            <FieldRow label={t("settings.overwrite")}>
+              <Toggle checked={overwrite} onChange={(v) => set({ overwrite: v })} />
+            </FieldRow>
+            <FieldRow label="" disabled={!overwrite}>
+              <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                <div className="pt-0.5 shrink-0">
+                  <Toggle checked={cover} onChange={(v) => set({ cover: v })} disabled={!overwrite} />
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 min-w-0">
+                  <span className="text-[14px] text-text-main shrink-0">{t("settings.coverPrefix")}</span>
+                  <NumberField value={settings.coverSec} onChange={(v) => set({ coverSec: v })} min={0} max={9999} disabled={!overwrite} />
+                  <span className="text-[14px] text-text-main leading-snug break-words">{t("settings.coverSuffix")}</span>
+                </div>
+              </div>
+            </FieldRow>
+          </>
+        )}
       </div>
     </Dialog>
   );
