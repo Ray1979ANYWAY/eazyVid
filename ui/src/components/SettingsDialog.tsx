@@ -23,7 +23,7 @@ function NumberField({
       <button
         onClick={() => onChange(clamp(value - 1))}
         disabled={disabled}
-        className="w-7 h-7 rounded border border-border-soft text-text-sub hover:bg-slate-100 cursor-pointer text-[14px] leading-none disabled:opacity-35"
+        className="w-7 h-7 rounded border border-border-soft bg-card text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-[14px] leading-none disabled:opacity-35"
       >
         −
       </button>
@@ -35,12 +35,12 @@ function NumberField({
           onChange(v === "" ? 0 : clamp(parseInt(v, 10)));
         }}
         onBlur={() => onChange(clamp(value))}
-        className="w-12 h-7 text-center rounded border border-border-soft text-[14px] text-text-main focus:outline-2 focus:outline-brand-500 disabled:opacity-40"
+        className="w-12 h-7 text-center rounded border border-border-soft bg-card text-[14px] text-text-main focus:outline-2 focus:outline-brand-500 disabled:opacity-40"
       />
       <button
         onClick={() => onChange(clamp(value + 1))}
         disabled={disabled}
-        className="w-7 h-7 rounded border border-border-soft text-text-sub hover:bg-slate-100 cursor-pointer text-[14px] leading-none disabled:opacity-35"
+        className="w-7 h-7 rounded border border-border-soft bg-card text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-[14px] leading-none disabled:opacity-35"
       >
         +
       </button>
@@ -92,11 +92,11 @@ export function SettingsDialog({
       width={600}
       height={570}
       footer={
-        <div className="px-5 py-3 border-t border-border-soft bg-slate-50/60 rounded-b-xl flex items-center justify-end">
+        <div className="px-5 py-3 border-t border-border-soft bg-slate-50/60 dark:bg-slate-900/60 rounded-b-xl flex items-center justify-end">
           <button
             type="button"
             onClick={onOpenAbout}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-border-soft bg-white text-text-sub hover:text-text-main hover:bg-slate-100 hover:border-slate-300 text-[13px] font-medium transition-all shadow-2xs cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-border-soft bg-card text-text-sub hover:text-text-main hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600 text-[13px] font-medium transition-all shadow-2xs cursor-pointer"
           >
             <span>{t("about.btn")}</span>
           </button>
@@ -128,7 +128,7 @@ export function SettingsDialog({
             <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center min-w-0">
               <span className="truncate">{settings.dlDir || t("settings.dlDirDefault")}</span>
             </div>
-            <IconBtn tip={t("settings.browse")} onClick={() => browse("dl")} className="w-8 h-8 border border-border-soft bg-white shrink-0">
+            <IconBtn tip={t("settings.browse")} onClick={() => browse("dl")} className="w-8 h-8 border border-border-soft bg-card shrink-0">
               <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={15} />
             </IconBtn>
           </div>
@@ -147,7 +147,7 @@ export function SettingsDialog({
               <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center min-w-0">
                 <span className="truncate">{settings.outDir || t("settings.outUnspecified")}</span>
               </div>
-              <IconBtn tip={t("settings.browse")} onClick={() => browse("out")} className="w-8 h-8 border border-border-soft bg-white shrink-0">
+              <IconBtn tip={t("settings.browse")} onClick={() => browse("out")} className="w-8 h-8 border border-border-soft bg-card shrink-0">
                 <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={15} />
               </IconBtn>
             </div>

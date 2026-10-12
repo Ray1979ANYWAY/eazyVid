@@ -139,7 +139,7 @@ function DlRow({
       ? "bg-lavender-row"
       : t.status === "failed"
         ? "bg-amber-row"
-        : "bg-white";
+        : "bg-card";
   const bg = selected ? "bg-selected-row" : baseBg;
 
   /* 行内容（进度条层 + 信息 grid），浮行与占位共用 */
@@ -782,7 +782,7 @@ export function DownloadPanel({
                 })();
               }}
               placeholder={t("dl.placeholder")}
-              className="w-full h-10 pl-3.5 pr-12 rounded-lg border border-border-soft bg-white text-[15px] text-text-main
+              className="w-full h-10 pl-3.5 pr-12 rounded-lg border border-border-soft bg-card text-[15px] text-text-main
                 placeholder:text-text-sub/60 focus:outline-2 focus:outline-brand-500 focus:border-brand-300"
             />
             <IconBtn
@@ -858,7 +858,7 @@ export function DownloadPanel({
 
       {/* 格式列表（常驻区域：未探测时为空态提示；超 300px 内容区滚动，表头固定） */}
       <div className="shrink-0 px-4 pb-2">
-        <div className="rounded-xl border border-border-soft bg-white overflow-hidden">
+        <div className="rounded-xl border border-border-soft bg-card overflow-hidden">
           <div className="grid grid-cols-[100px_75px_85px_105px_1fr_80px] items-center h-9 px-3 bg-surface text-[12px] text-text-sub font-medium">
             <button className="flex items-center gap-1 cursor-pointer hover:text-text-main" onClick={() => toggleSort("res")}>
               {t("dl.col.res")}

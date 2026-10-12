@@ -27,25 +27,50 @@ function GlobalFooter({
   dlDoneCount,
   shutdown,
   onShutdownChange,
+  theme,
+  onToggleTheme,
 }: {
   panel: Panel;
   cmpGain: number;
   dlDoneCount: number;
   shutdown: boolean;
   onShutdownChange: (v: boolean) => void;
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
 }) {
   const show = useTip();
   const { t } = useI18n();
   return (
-    <footer className="shrink-0 h-12 px-4 border-t border-border-soft bg-white/70 flex items-center gap-3">
-      {/* 左下角恒定放版本号 */}
+    <footer className="shrink-0 h-12 px-4 border-t border-border-soft bg-card/85 backdrop-blur-sm flex items-center gap-3">
+      {/* 左下角恒定放版本号与深浅主题切换 */}
       <div className="flex items-center gap-2 shrink-0">
-        <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200/80 text-[11.5px] font-mono font-semibold text-text-sub select-none">
+        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 text-[11.5px] font-mono font-semibold text-text-sub select-none">
           v0.1.0
         </span>
+        {/* 小太阳与小月亮切换按钮 */}
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          title={theme === "dark" ? t("theme.light") : t("theme.dark")}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-text-sub hover:text-text-main hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          aria-label={t("theme.toggle")}
+        >
+          {theme === "dark" ? (
+            /* 小太阳 (Sun Icon) */
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            </svg>
+          ) : (
+            /* 小月亮 (Moon Icon) */
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-600">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>
+            </svg>
+          )}
+        </button>
       </div>
 
-      {/* 收益或统计提示：放在版本号的右边 */}
+      {/* 收益或统计提示：放在版本号与主题按钮的右边 */}
       {panel === "compress" ? (
         <div className="text-[13.5px] text-text-main tabular-nums flex items-center gap-1.5 min-w-0">
           <span className="text-border-soft">|</span>
@@ -77,6 +102,7 @@ function GlobalFooter({
 }
 
 export type Settings = {
+  theme?: "light" | "dark";
   lang: LangSetting; // 界面语言：system 跟随系统 | zh-CN 简体中文 | en 英文
   dlWorkers: number;
   compressWorkers: number;
@@ -89,6 +115,7 @@ export type Settings = {
 };
 
 const DEFAULTS: Settings = {
+  theme: "light",
   lang: "system",
   dlWorkers: 3,
   compressWorkers: 3,
@@ -125,6 +152,15 @@ function App() {
       /* 无权限时忽略（运行期仍生效） */
     }
   }, [settings]);
+
+  /* 暗色主题同步到 <html> 根节点 */
+  useEffect(() => {
+    if (settings.theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [settings.theme]);
 
   // 面板活动状态（面板组件上报）：有运行任务=绿闪、有失败=黄，与选中状态无关
   const [dlAct, setDlAct] = useState({ busy: false, fail: false, running: 0, queued: 0 });
@@ -581,6 +617,10 @@ function App() {
               setShutdown(v);
               if (!v && shutdownPending) cancelShutdown();
             }}
+            theme={settings.theme || "light"}
+            onToggleTheme={() =>
+              setSettings((s) => ({ ...s, theme: s.theme === "dark" ? "light" : "dark" }))
+            }
           />
         </main>
       </div>
@@ -602,7 +642,7 @@ function App() {
       >
         <div className="flex flex-col gap-4 text-text-main">
           {/* 状态总览提示 */}
-          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60">
             {hasAnyUpdate ? (
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0 text-amber-500">
                 <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -623,7 +663,7 @@ function App() {
             {updateItems.map((item) => (
               <div
                 key={item.id}
-                className="p-3.5 rounded-xl border border-border-soft bg-white hover:border-slate-300 transition-colors flex items-center justify-between gap-3 shadow-2xs"
+                className="p-3.5 rounded-xl border border-border-soft bg-card hover:border-slate-300 dark:hover:border-slate-600 transition-colors flex items-center justify-between gap-3 shadow-2xs"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -631,8 +671,8 @@ function App() {
                     <span
                       className={`text-[11px] px-2 py-0.5 rounded-md font-medium ${
                         item.newer
-                          ? "bg-amber-100 text-amber-700 font-semibold"
-                          : "bg-slate-100 text-slate-500"
+                          ? "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-semibold"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
                       }`}
                     >
                       {item.newer ? t("updater.updateAvailable") : t("updater.stableTag")}
@@ -640,11 +680,11 @@ function App() {
                   </div>
                   <p className="text-[12px] text-text-sub mt-0.5">{item.role}</p>
                   <div className="flex items-center gap-3 mt-1.5 text-[12px] tabular-nums">
-                    <span className="text-slate-500">
+                    <span className="text-slate-500 dark:text-slate-400">
                       {t("updater.current", { ver: item.current || "未知" })}
                     </span>
-                    <span className="text-slate-300">|</span>
-                    <span className={item.newer ? "text-amber-600 font-semibold" : "text-slate-600"}>
+                    <span className="text-slate-300 dark:text-slate-600">|</span>
+                    <span className={item.newer ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-slate-600 dark:text-slate-300"}>
                       {t("updater.latest", { ver: item.latest || "未知" })}
                     </span>
                   </div>
@@ -701,12 +741,12 @@ function App() {
         width={460}
       >
         <div className="flex flex-col items-center text-center py-2 text-text-main">
-          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 shadow-xs mb-3">
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 shadow-xs mb-3">
             <Logo size={56} />
           </div>
-          <h3 className="text-[17px] font-bold text-slate-900 flex items-center gap-2">
+          <h3 className="text-[17px] font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <span>eazyVid</span>
-            <span className="text-[12px] font-mono font-semibold px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 border border-brand-200">
+            <span className="text-[12px] font-mono font-semibold px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-300 border border-brand-200 dark:border-brand-800/60">
               v0.1.0
             </span>
             <a
@@ -714,7 +754,7 @@ function App() {
               target="_blank"
               rel="noreferrer"
               title="Apache License 2.0"
-              className="text-[11.5px] font-medium px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200 transition-colors cursor-pointer"
+              className="text-[11.5px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
             >
               Apache-2.0
             </a>
@@ -724,12 +764,12 @@ function App() {
           </p>
 
           {/* 软件与组件更新 */}
-          <div className="w-full mt-5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-3 text-left">
+          <div className="w-full mt-5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between gap-3 text-left">
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold text-text-main flex items-center gap-1.5">
                 <span>{t("settings.updateCheck")}</span>
                 {hasAnyUpdate && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium bg-amber-100 text-amber-700 border border-amber-300">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800/60">
                     {t("updater.updateAvailable")}
                   </span>
                 )}
@@ -779,7 +819,7 @@ function App() {
               href="https://github.com/Ray1979ANYWAY/eazyVid"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-black text-white text-[12.5px] font-medium transition-all shadow-2xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-800 hover:bg-black dark:hover:bg-slate-700 text-white text-[12.5px] font-medium transition-all shadow-2xs cursor-pointer"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                 <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>

@@ -105,6 +105,12 @@ const DICT = {
 
   // Settings Dialog
   "settings.title": { "zh-CN": "设置", en: "Settings" },
+  "settings.theme": { "zh-CN": "界面外观", en: "Appearance" },
+  "settings.themeLight": { "zh-CN": "浅色明亮", en: "Light" },
+  "settings.themeDark": { "zh-CN": "深色夜间", en: "Dark" },
+  "theme.toggle": { "zh-CN": "切换外观模式", en: "Toggle Appearance" },
+  "theme.light": { "zh-CN": "切换至日间模式", en: "Switch to Light Mode" },
+  "theme.dark": { "zh-CN": "切换至夜间模式", en: "Switch to Dark Mode" },
   "settings.lang": { "zh-CN": "界面语言", en: "Display Language" },
   "settings.langSystem": { "zh-CN": "跟随系统", en: "System Default" },
   "settings.langZh": { "zh-CN": "简体中文", en: "简体中文" },

@@ -32,10 +32,10 @@ export function Button({
   const variants: Record<BtnVariant, string> = {
     primary:
       "bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700 shadow-sm shadow-brand-500/25",
-    ghost: "text-text-sub hover:bg-slate-100 hover:text-text-main",
+    ghost: "text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-text-main",
     danger: "bg-danger/10 text-danger hover:bg-danger/20",
-    soft: "bg-brand-50 text-brand-700 hover:bg-brand-100 border border-border-brand",
-    outline: "border border-border-soft bg-white text-text-main hover:border-brand-300 hover:text-brand-600",
+    soft: "bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-900/60 border border-border-brand",
+    outline: "border border-border-soft bg-card text-text-main hover:border-brand-300 dark:hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-300",
   };
   return (
     <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
@@ -86,7 +86,7 @@ export function IconBtn({
   const show = useTip();
   return (
     <button
-      className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-md text-text-sub hover:text-brand-600 hover:bg-brand-50 transition-colors cursor-pointer ${className}`}
+      className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-md text-text-sub hover:text-brand-600 dark:hover:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-900/40 transition-colors cursor-pointer ${className}`}
       onMouseEnter={(e) => tip && show(e.currentTarget, tip)}
       {...rest}
     >
@@ -114,7 +114,7 @@ export function Toggle({
       onClick={() => !disabled && onChange(!checked)}
       className={`w-9 h-5 shrink-0 rounded-[4px] transition-colors duration-150 cursor-pointer relative
         ${disabled ? "opacity-35 cursor-not-allowed" : ""}
-        ${checked ? "bg-brand-500" : "bg-slate-300"}`}
+        ${checked ? "bg-brand-500" : "bg-slate-300 dark:bg-slate-700"}`}
     >
       <span
         className={`absolute top-0.5 w-4 h-4 rounded-[3px] bg-white shadow transition-all duration-150
@@ -209,12 +209,12 @@ export function Select({
           }
         }}
         style={curTint ? { background: curTint } : undefined}
-        className={`h-8 rounded-md border border-border-soft bg-white px-2.5 text-[14px] text-text-main
+        className={`h-8 rounded-md border border-border-soft bg-card px-2.5 text-[14px] text-text-main
           flex items-center justify-between gap-1 cursor-pointer hover:border-brand-400
           focus:outline-2 focus:outline-brand-500 ${open ? "border-brand-400" : ""}`}
       >
         <span className="truncate">{cur?.label ?? value}</span>
-        <span className="text-[11px] text-text-soft leading-none shrink-0">▾</span>
+        <span className="text-[11px] text-text-sub leading-none shrink-0">▾</span>
       </div>
       {/* 展开面板：portal 到 body 顶层，每行底色 = 该模式色阶（none/无 tint 为白底） */}
       {open &&
@@ -222,7 +222,7 @@ export function Select({
           <div
             ref={panelRef}
             role="listbox"
-            className={`fixed z-[100] max-h-[220px] overflow-y-auto rounded-md border border-border-soft bg-white shadow-lg ${pos.up ? "mb-1" : "mt-1"}`}
+            className={`fixed z-[100] max-h-[220px] overflow-y-auto rounded-md border border-border-soft bg-card shadow-xl shadow-black/30 ${pos.up ? "mb-1" : "mt-1"}`}
             style={{
               left: pos.left,
               minWidth: pos.width,
@@ -239,11 +239,11 @@ export function Select({
                   onChange(o.value);
                   setOpen(false);
                 }}
-                className={`px-2.5 py-1.5 text-[14px] cursor-pointer hover:bg-gray-100 flex items-center justify-between gap-1 whitespace-nowrap
+                className={`px-2.5 py-1.5 text-[14px] cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-between gap-1 whitespace-nowrap
                   ${o.value === value ? "font-semibold text-text-main" : "text-text-main"}`}
               >
                 <span>{o.label}</span>
-                {o.value === value && <span className="text-[11px] text-brand-600 leading-none">✓</span>}
+                {o.value === value && <span className="text-[11px] text-brand-600 dark:text-brand-400 leading-none">✓</span>}
               </div>
             ))}
           </div>,
@@ -338,7 +338,7 @@ export function ContextMenu({
   }, [x, y]);
   return createPortal(
     <div className="fixed z-[9999]" data-ctx-menu style={{ left: pos.x, top: pos.y }}>
-      <div ref={menuRef} className="bg-white rounded-lg shadow-xl shadow-brand-900/15 border border-border-soft py-1 min-w-[150px]">
+      <div ref={menuRef} className="bg-card rounded-lg shadow-xl shadow-black/40 border border-border-soft py-1 min-w-[150px]">
         {items.map((it, i) => (
           <button
             key={i}
@@ -346,7 +346,7 @@ export function ContextMenu({
               it.onClick();
               onClose();
             }}
-            className={`w-full text-left px-3.5 h-8.5 text-[14px] cursor-pointer hover:bg-brand-50 transition-colors ${it.danger ? "text-danger" : "text-text-main"}`}
+            className={`w-full text-left px-3.5 h-8.5 text-[14px] cursor-pointer hover:bg-brand-50 dark:hover:bg-brand-900/40 transition-colors ${it.danger ? "text-danger" : "text-text-main"}`}
           >
             {it.label}
           </button>
@@ -383,7 +383,7 @@ export function Dialog({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#14185e]/30 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#14185e]/30 dark:bg-black/60 backdrop-blur-[2px]"
       onClick={(e) => {
         // 防止快速双击/连击触发按钮时，第二击落在遮罩上导致弹窗被秒关（此前 88ms 闪退无感知）
         if (e.target === e.currentTarget && Date.now() - openTs.current > 300) {
@@ -392,14 +392,14 @@ export function Dialog({
       }}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl shadow-brand-900/20 border border-border-soft flex flex-col max-h-[86vh] overflow-hidden"
+        className="bg-card rounded-xl shadow-2xl shadow-black/40 border border-border-soft flex flex-col max-h-[86vh] overflow-hidden"
         style={{ width, ...(height ? { height } : {}) }}
       >
         <div className="flex items-center justify-between px-5 h-12 border-b border-border-soft shrink-0">
-          <div className="text-[16px] font-semibold text-brand-800 font-display">{title}</div>
+          <div className="text-[16px] font-semibold text-brand-800 dark:text-brand-200 font-display">{title}</div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-text-sub hover:bg-slate-100 hover:text-text-main cursor-pointer"
+            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-text-main cursor-pointer"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <path d="M18 6 6 18M6 6l12 12" />

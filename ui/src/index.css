@@ -56,6 +56,50 @@
   --gradient-brand-h: linear-gradient(90deg, #005ce6 0%, #0c34b8 30%, #501a94 70%, #7b2cbf 100%);
 }
 
+/* ============ 夜间模式变量与主题（遵循 eazyVid 深蓝/紫品牌 UI 设计原则）============ */
+html.dark,
+body.dark,
+.dark {
+  color-scheme: dark;
+
+  /* 夜间模式中性与界面背景：深邃的午夜黑蓝，契合 eazyVid 品牌深蓝 #14185e / #12144a 底蕴 */
+  --color-surface: #0b0f19;
+  --color-card: #131b2e;
+  --color-border-soft: #232f48;
+  --color-border-brand: #2b395b;
+  --color-text-main: #f8fafc;
+  --color-text-sub: #94a3b8;
+
+  /* 浅色品牌阶在暗色下自然降低过曝感 */
+  --color-brand-50: #162238;
+  --color-brand-100: #1d2c47;
+  --color-brand-200: #26385a;
+
+  /* 完成行与异常行暗色对比度微调：护眼、通透 */
+  --color-lavender-row: rgba(157, 98, 238, 0.16);
+  --color-amber-row: rgba(245, 158, 11, 0.16);
+  --color-selected-row: #1c2742;
+}
+
+html.dark *,
+body.dark * {
+  scrollbar-color: #2b395b transparent;
+}
+html.dark *::-webkit-scrollbar-thumb,
+body.dark *::-webkit-scrollbar-thumb {
+  background: #2b395b;
+}
+html.dark *::-webkit-scrollbar-thumb:hover,
+body.dark *::-webkit-scrollbar-thumb:hover {
+  background: #3e517e;
+}
+
+.dark .ez-tip {
+  background: #192238;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;

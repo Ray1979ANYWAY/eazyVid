@@ -87,12 +87,12 @@ function CmpRow({
   const compressModes = useMemo(() => getCompressModes(tr), [tr]);
 
   const baseBg = isRunning
-    ? "bg-white"
+    ? "bg-card"
     : t.status === "done"
       ? "bg-lavender-row"
       : t.status === "stopped" || t.status === "skipped" || t.status === "failed"
         ? "bg-amber-row"
-        : "bg-white";
+        : "bg-card";
   const bg = selected ? "bg-selected-row" : baseBg;
 
   const statusText: Record<string, string> = {
@@ -815,20 +815,20 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
         >
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col p-2 select-none">
-              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 flex flex-col items-center justify-center p-6 text-center transition-all">
+              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 dark:border-purple-800/50 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 dark:from-purple-950/20 via-white dark:via-card/60 to-purple-50/20 dark:to-purple-950/20 flex flex-col items-center justify-center p-6 text-center transition-all">
                 {/* 核心插画：文件减重瘦身艺术隐喻 (850MB ➔ 210MB，一秒辨识为视频压缩) */}
                 <div className="relative w-48 h-36 mb-4 flex items-center justify-center">
                   {/* 柔和紫色渐变底环 */}
                   <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-xl" />
 
                   {/* 左侧：原始大视频文件 */}
-                  <div className="absolute -left-2 w-24 h-28 bg-white rounded-xl border border-border-soft shadow-md p-2 flex flex-col justify-between">
+                  <div className="absolute -left-2 w-24 h-28 bg-card rounded-xl border border-border-soft shadow-md p-2 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="w-2 h-2 rounded-full bg-rose-400" />
                       <span className="text-[10px] font-mono text-text-sub">MP4</span>
                     </div>
                     <div className="flex flex-col items-center">
-                      <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-500 flex items-center justify-center mb-1">
+                      <div className="w-8 h-8 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-500 flex items-center justify-center mb-1">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
                           <line x1="7" y1="2" x2="7" y2="22" />
@@ -847,13 +847,13 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                         <path d="M12 3v14m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
                       </svg>
                     </div>
-                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-bold tracking-tight">
+                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[10px] font-bold tracking-tight">
                       {t("cmp.slimmingBadge")}
                     </span>
                   </div>
 
                   {/* 右侧：压缩后精炼小文件 */}
-                  <div className="absolute -right-2 w-24 h-28 bg-white rounded-xl border border-purple-200 shadow-md p-2 flex flex-col justify-between">
+                  <div className="absolute -right-2 w-24 h-28 bg-card rounded-xl border border-purple-200 dark:border-purple-800/60 shadow-md p-2 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
                       <span className="text-[10px] font-mono text-purple-600 font-bold">OPTIMIZED</span>
