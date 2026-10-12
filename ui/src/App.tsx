@@ -868,7 +868,7 @@ function App() {
       </Dialog>
       {/* 队列任务完成应用内浮动 Toast（未开自动关机时优雅呈现） */}
       {completeToast?.open && (
-        <div className="fixed bottom-16 right-5 z-50 w-80 bg-white/95 backdrop-blur-md border border-border-soft rounded-2xl shadow-xl p-3.5 flex items-start gap-3 transition-all animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-16 right-5 z-50 w-80 bg-card/95 backdrop-blur-md border border-border-soft dark:border-slate-700/80 rounded-2xl shadow-xl p-3.5 flex items-start gap-3 transition-all animate-in fade-in slide-in-from-bottom-2">
           <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
             completeToast.type === "cmp" ? "bg-amber-500/15 text-amber-600" : "bg-[#14185e] text-blue-400"
           }`}>

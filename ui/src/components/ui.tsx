@@ -32,10 +32,10 @@ export function Button({
   const variants: Record<BtnVariant, string> = {
     primary:
       "bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700 shadow-sm shadow-brand-500/25",
-    ghost: "text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-text-main",
+    ghost: "text-text-sub hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-text-main dark:hover:text-white",
     danger: "bg-danger/10 text-danger hover:bg-danger/20",
-    soft: "bg-brand-50 dark:bg-brand-900/40 text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-900/60 border border-border-brand",
-    outline: "border border-border-soft bg-card text-text-main hover:border-brand-300 dark:hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-300",
+    soft: "bg-brand-50 text-brand-700 hover:bg-brand-100 border border-border-brand dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700/90",
+    outline: "border border-border-soft bg-card text-text-main hover:border-brand-300 dark:border-slate-700 dark:hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-300",
   };
   return (
     <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>

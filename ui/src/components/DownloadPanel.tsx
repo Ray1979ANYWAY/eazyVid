@@ -52,7 +52,7 @@ function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) =
       onMouseLeave={() => setHover(false)}
       onDoubleClick={() => onDownload(f)}
     >
-      <div className="text-[15px] font-semibold text-brand-700">{f.res}</div>
+      <div className="text-[15px] font-semibold text-brand-700 dark:text-brand-300">{f.res}</div>
       <div className="text-[14px] text-text-sub">{f.ext.toUpperCase()}</div>
       <div className="text-[14px] text-text-sub">{f.codec}</div>
       <div className="text-[14px] text-text-main">{f.size}</div>
@@ -169,7 +169,7 @@ function DlRow({
         </div>
 
         {/* 进度百分比 */}
-        <div className="text-[14px] font-semibold text-brand-700 tabular-nums">
+        <div className="text-[14px] font-semibold text-brand-700 dark:text-brand-300 tabular-nums">
           {t.status === "downloading"
             ? `${Math.round(pct)}%`
             : t.status === "done" || t.status === "merging"
@@ -250,7 +250,7 @@ function DlRow({
           style={{ height: 62 }}
         />
         <div
-          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white pointer-events-none"
+          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-card pointer-events-none"
           style={{ top: drag.draggingTop, left: drag.draggingLeft, width: drag.draggingWidth }}
         >
           {inner}
@@ -823,11 +823,11 @@ export function DownloadPanel({
 
         {/* 智能剪贴板感知提示条 */}
         {clipUrl && (
-          <div className="mt-2.5 px-3 py-2 bg-brand-50/80 border border-brand-200/80 rounded-lg flex items-center justify-between shadow-xs">
-            <div className="flex items-center gap-2 text-[13px] text-brand-900 truncate mr-2 min-w-0">
+          <div className="mt-2.5 px-3 py-2 bg-brand-50/80 dark:bg-brand-950/40 border border-brand-200/80 dark:border-brand-800/60 rounded-lg flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2 text-[13px] text-brand-900 dark:text-brand-200 truncate mr-2 min-w-0">
               <span className="shrink-0 text-[14px]">📋</span>
               <span className="font-medium text-text-sub shrink-0">{t("dl.clipDetected")}</span>
-              <span className="font-mono text-brand-700 bg-white/90 px-2 py-0.5 rounded border border-brand-200/60 truncate max-w-[380px]">
+              <span className="font-mono text-brand-700 dark:text-brand-300 bg-white/90 dark:bg-card/90 px-2 py-0.5 rounded border border-brand-200/60 dark:border-brand-700/60 truncate max-w-[380px]">
                 {clipUrl}
               </span>
             </div>
@@ -988,19 +988,19 @@ export function DownloadPanel({
               {/* 现代通用流媒体矢量抽象插画（方案 B：艺术化规避商标侵权） */}
               <div className="relative w-36 h-36 mb-4 flex items-center justify-center">
                 {/* 柔和呼吸渐变底环 */}
-                <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-brand-500/20 via-blue-400/15 to-purple-400/20 blur-xl" />
+                <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-brand-500/20 via-blue-400/15 to-purple-400/20 blur-xl dark:opacity-30" />
 
                 {/* 悬浮主卡片 */}
-                <div className="relative w-28 h-24 bg-white/95 backdrop-blur-md rounded-2xl border border-border-soft shadow-lg p-2.5 flex flex-col justify-between">
+                <div className="relative w-28 h-24 bg-card/95 backdrop-blur-md rounded-2xl border border-border-soft dark:border-slate-700/80 shadow-lg p-2.5 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
                     <div className="flex gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-200" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
                     </div>
                     <div className="flex items-center gap-0.5">
                       <span className="w-1 h-3 rounded-full bg-brand-500/60" />
-                      <span className="w-1 h-4 rounded-full bg-brand-600" />
+                      <span className="w-1 h-4 rounded-full bg-brand-600 dark:bg-brand-400" />
                       <span className="w-1 h-2 rounded-full bg-brand-400/50" />
                     </div>
                   </div>
@@ -1011,13 +1011,13 @@ export function DownloadPanel({
                     </svg>
                   </div>
 
-                  <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
                     <div className="bg-gradient-to-r from-brand-500 to-indigo-500 h-full w-2/3 rounded-full" />
                   </div>
                 </div>
 
                 {/* 右上角流媒体链接节点微标 */}
-                <div className="absolute -top-1 -right-1 w-8 h-8 rounded-xl bg-white border border-border-soft shadow-sm flex items-center justify-center text-brand-600">
+                <div className="absolute -top-1 -right-1 w-8 h-8 rounded-xl bg-card border border-border-soft dark:border-slate-700/80 shadow-sm flex items-center justify-center text-brand-600 dark:text-brand-300">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
@@ -1025,7 +1025,7 @@ export function DownloadPanel({
                 </div>
 
                 {/* 左下角高清规格标签 */}
-                <div className="absolute -bottom-1 -left-1 px-1.5 py-0.5 rounded-md bg-white border border-border-soft shadow-xs text-[10px] font-bold tracking-wider text-indigo-700 font-mono">
+                <div className="absolute -bottom-1 -left-1 px-1.5 py-0.5 rounded-md bg-card border border-border-soft dark:border-slate-700/80 shadow-xs text-[10px] font-bold tracking-wider text-indigo-700 dark:text-indigo-300 font-mono">
                   4K HDR
                 </div>
               </div>
@@ -1049,9 +1049,9 @@ export function DownloadPanel({
                     setUrl("https://www.youtube.com/watch?v=");
                     inputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-full bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-border-soft hover:border-brand-300 dark:hover:border-brand-500 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
                   YouTube
                 </span>
 
@@ -1060,9 +1060,9 @@ export function DownloadPanel({
                     setUrl("https://www.bilibili.com/video/");
                     inputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-full bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-border-soft hover:border-brand-300 dark:hover:border-brand-500 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 shrink-0" />
                   Bilibili 哔哩哔哩
                 </span>
 
@@ -1071,9 +1071,9 @@ export function DownloadPanel({
                     setUrl("https://twitter.com/");
                     inputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-full bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-border-soft hover:border-brand-300 dark:hover:border-brand-500 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700 dark:bg-slate-300 shrink-0" />
                   X / Twitter
                 </span>
 
@@ -1082,9 +1082,9 @@ export function DownloadPanel({
                     setUrl("https://www.tiktok.com/");
                     inputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-full bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-border-soft hover:border-brand-300 dark:hover:border-brand-500 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
                   TikTok 抖音
                 </span>
 
@@ -1092,9 +1092,9 @@ export function DownloadPanel({
                   onClick={() => {
                     inputRef.current?.focus();
                   }}
-                  className="px-2.5 py-1 rounded-full bg-white hover:bg-brand-50/60 border border-border-soft hover:border-brand-300 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-full bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-border-soft hover:border-brand-300 dark:hover:border-brand-500 text-[12.5px] text-text-main font-medium shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                   m3u8 / MP4 直链
                 </span>
 

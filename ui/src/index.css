@@ -1,3 +1,4 @@
+@custom-variant dark (&:where(.dark, .dark *));
 @import "tailwindcss";
 
 /* ============ 品牌展示字体：Unbounded（方案 C：工业宽体，内嵌零网络延迟）============ */

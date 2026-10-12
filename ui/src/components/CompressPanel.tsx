@@ -135,7 +135,7 @@ function CmpRow({
           {isRunning && (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-[14px] font-semibold text-brand-700 tabular-nums">{Math.round(pct)}%</span>
+                <span className="text-[14px] font-semibold text-brand-700 dark:text-brand-300 tabular-nums">{Math.round(pct)}%</span>
                 <span className="text-[12px] text-text-sub tabular-nums">
                   {t.pos} / {t.dur}
                 </span>
@@ -231,7 +231,7 @@ function CmpRow({
           style={{ height: 58 }}
         />
         <div
-          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-white pointer-events-none"
+          className="fixed z-50 rounded-lg overflow-hidden shadow-xl ring-2 ring-brand-400/70 opacity-95 scale-[1.02] bg-card pointer-events-none"
           style={{ top: drag.draggingTop, left: drag.draggingLeft, width: drag.draggingWidth }}
         >
           {inner}
@@ -815,14 +815,14 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
         >
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col p-2 select-none">
-              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 dark:border-purple-800/50 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 dark:from-purple-950/20 via-white dark:via-card/60 to-purple-50/20 dark:to-purple-950/20 flex flex-col items-center justify-center p-6 text-center transition-all">
+              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 dark:from-transparent dark:via-transparent dark:to-transparent dark:bg-card/40 dark:border-purple-900/60 dark:hover:border-purple-700/80 flex flex-col items-center justify-center p-6 text-center transition-all">
                 {/* 核心插画：文件减重瘦身艺术隐喻 (850MB ➔ 210MB，一秒辨识为视频压缩) */}
                 <div className="relative w-48 h-36 mb-4 flex items-center justify-center">
                   {/* 柔和紫色渐变底环 */}
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-xl" />
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-xl dark:opacity-30" />
 
                   {/* 左侧：原始大视频文件 */}
-                  <div className="absolute -left-2 w-24 h-28 bg-card rounded-xl border border-border-soft shadow-md p-2 flex flex-col justify-between">
+                  <div className="absolute -left-2 w-24 h-28 bg-card rounded-xl border border-border-soft dark:border-slate-700/80 shadow-md p-2 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="w-2 h-2 rounded-full bg-rose-400" />
                       <span className="text-[10px] font-mono text-text-sub">MP4</span>
@@ -856,16 +856,16 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                   <div className="absolute -right-2 w-24 h-28 bg-card rounded-xl border border-purple-200 dark:border-purple-800/60 shadow-md p-2 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-mono text-purple-600 font-bold">OPTIMIZED</span>
+                      <span className="text-[10px] font-mono text-purple-600 dark:text-purple-300 font-bold">OPTIMIZED</span>
                     </div>
                     <div className="flex flex-col items-center">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center mb-1">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                           <polyline points="22 4 12 14.01 9 11.01" />
                         </svg>
                       </div>
-                      <span className="text-[12px] font-bold text-emerald-700">210 MB</span>
+                      <span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-300">210 MB</span>
                     </div>
                     <span className="text-[9px] text-text-sub">{t("cmp.optSizeLabel")}</span>
                   </div>
@@ -901,60 +901,60 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                       onClick={() => setDefMode("default")}
                       className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
                         defMode === "default"
-                          ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300/40"
-                          : "border-emerald-200/80 bg-emerald-50/50 hover:bg-emerald-100/70"
+                          ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300/40 dark:bg-emerald-950/45 dark:border-emerald-400 dark:ring-emerald-500/25"
+                          : "border-emerald-200/80 bg-emerald-50/50 hover:bg-emerald-100/70 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-emerald-900">{t("mode.default")}</span>
+                        <span className="text-[12.5px] font-bold text-emerald-900 dark:text-emerald-200">{t("mode.default")}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                       </div>
-                      <p className="text-[11px] text-emerald-700/80 mt-0.5 leading-tight">{t("cmp.presetDescDefault")}</p>
+                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5 leading-tight">{t("cmp.presetDescDefault")}</p>
                     </div>
 
                     <div
                       onClick={() => setDefMode("hq")}
                       className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
                         defMode === "hq"
-                          ? "border-sky-400 bg-sky-50 ring-2 ring-sky-300/40"
-                          : "border-sky-200/80 bg-sky-50/50 hover:bg-sky-100/70"
+                          ? "border-sky-400 bg-sky-50 ring-2 ring-sky-300/40 dark:bg-sky-950/45 dark:border-sky-400 dark:ring-sky-500/25"
+                          : "border-sky-200/80 bg-sky-50/50 hover:bg-sky-100/70 dark:border-sky-900/60 dark:bg-sky-950/25 dark:hover:bg-sky-950/40"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-sky-900">{t("mode.hq")}</span>
+                        <span className="text-[12.5px] font-bold text-sky-900 dark:text-sky-200">{t("mode.hq")}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
                       </div>
-                      <p className="text-[11px] text-sky-700/80 mt-0.5 leading-tight">{t("cmp.presetDescHq")}</p>
+                      <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80 mt-0.5 leading-tight">{t("cmp.presetDescHq")}</p>
                     </div>
 
                     <div
                       onClick={() => setDefMode("fast")}
                       className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
                         defMode === "fast"
-                          ? "border-amber-400 bg-amber-50 ring-2 ring-amber-300/40"
-                          : "border-amber-200/80 bg-amber-50/50 hover:bg-amber-100/70"
+                          ? "border-amber-400 bg-amber-50 ring-2 ring-amber-300/40 dark:bg-amber-950/45 dark:border-amber-400 dark:ring-amber-500/25"
+                          : "border-amber-200/80 bg-amber-50/50 hover:bg-amber-100/70 dark:border-amber-900/60 dark:bg-amber-950/25 dark:hover:bg-amber-950/40"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-amber-900">{t("mode.fast")}</span>
+                        <span className="text-[12.5px] font-bold text-amber-900 dark:text-amber-200">{t("mode.fast")}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                       </div>
-                      <p className="text-[11px] text-amber-700/80 mt-0.5 leading-tight">{t("cmp.presetDescFast")}</p>
+                      <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5 leading-tight">{t("cmp.presetDescFast")}</p>
                     </div>
 
                     <div
                       onClick={() => setDefMode("av1")}
                       className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
                         defMode === "av1"
-                          ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300/40"
-                          : "border-indigo-200/80 bg-indigo-50/50 hover:bg-indigo-100/70"
+                          ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300/40 dark:bg-indigo-950/45 dark:border-indigo-400 dark:ring-indigo-500/25"
+                          : "border-indigo-200/80 bg-indigo-50/50 hover:bg-indigo-100/70 dark:border-indigo-900/60 dark:bg-indigo-950/25 dark:hover:bg-indigo-950/40"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-indigo-900">{t("mode.av1")}</span>
+                        <span className="text-[12.5px] font-bold text-indigo-900 dark:text-indigo-200">{t("mode.av1")}</span>
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
                       </div>
-                      <p className="text-[11px] text-indigo-700/80 mt-0.5 leading-tight">{t("cmp.presetDescAv1")}</p>
+                      <p className="text-[11px] text-indigo-700/80 dark:text-indigo-400/80 mt-0.5 leading-tight">{t("cmp.presetDescAv1")}</p>
                     </div>
                   </div>
                 </div>
