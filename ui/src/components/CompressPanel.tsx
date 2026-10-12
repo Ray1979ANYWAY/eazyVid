@@ -840,14 +840,54 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                     <span className="text-[9px] text-text-sub">{t("cmp.origSizeLabel")}</span>
                   </div>
 
-                  {/* 中间：高能压缩挤压齿轮与减重箭头 */}
+                  {/* 中间：C-Clamp台钳挤压视频帧 (物理压榨减重视觉隐喻，告别误解的下载箭头) */}
                   <div className="relative z-10 flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-purple-500/30">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M12 3v14m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-500 dark:from-purple-500 dark:via-indigo-500 dark:to-violet-400 text-white flex items-center justify-center shadow-lg shadow-purple-500/30 dark:shadow-purple-950/60 p-1.5 transition-transform hover:scale-105">
+                      <svg viewBox="0 0 48 48" fill="none" className="w-7 h-7 text-white">
+                        <defs>
+                          <mask id="cmpFilmHolesMask">
+                            <rect width="48" height="48" fill="white" />
+                            {/* 左侧胶片齿孔 */}
+                            <rect x="14.8" y="23" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="14.8" y="26.8" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="14.8" y="30.6" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="14.8" y="34.4" width="2" height="2" rx="0.5" fill="black" />
+                            {/* 右侧胶片齿孔 */}
+                            <rect x="26.2" y="23" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="26.2" y="26.8" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="26.2" y="30.6" width="2" height="2" rx="0.5" fill="black" />
+                            <rect x="26.2" y="34.4" width="2" height="2" rx="0.5" fill="black" />
+                            {/* 核心播放键镂空三角 */}
+                            <polygon points="19.5,25.5 19.5,33.5 25.8,29.5" fill="black" />
+                          </mask>
+                        </defs>
+
+                        {/* C-Clamp 钳身骨架 (环绕右侧有力包夹) */}
+                        <path
+                          d="M 13 16.5 C 13 13.5 15 12 19 12 H 34 C 38.5 12 42 15.5 42 20 V 36 C 42 40.5 38.5 44 34 44 H 19 C 15 44 13 42.5 13 39.5"
+                          stroke="currentColor"
+                          strokeWidth="4.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+
+                        {/* 顶部 T 型旋转把手 */}
+                        <rect x="10.5" y="2.5" width="22" height="3" rx="1.5" fill="currentColor" />
+                        <circle cx="10.5" cy="4" r="2.5" fill="currentColor" />
+                        <circle cx="32.5" cy="4" r="2.5" fill="currentColor" />
+
+                        {/* 螺旋下压丝杆 */}
+                        <rect x="20" y="5" width="3" height="12" rx="0.5" fill="currentColor" />
+                        <path d="M 18.5 7.5 h 6 M 18.5 10.5 h 6 M 18.5 13.5 h 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+
+                        {/* 挤压平压脚 */}
+                        <rect x="13" y="16.5" width="17" height="3" rx="1" fill="currentColor" />
+
+                        {/* 被强力压榨的胶片视频帧 (带有镂空播放三角与胶片齿孔，透出渐变紫底色) */}
+                        <rect x="13" y="20" width="17" height="18.5" rx="2.5" fill="currentColor" mask="url(#cmpFilmHolesMask)" />
                       </svg>
                     </div>
-                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[10px] font-bold tracking-tight">
+                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[10px] font-bold tracking-tight shadow-sm">
                       {t("cmp.slimmingBadge")}
                     </span>
                   </div>
