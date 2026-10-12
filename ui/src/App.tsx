@@ -37,17 +37,27 @@ function GlobalFooter({
   const show = useTip();
   const { t } = useI18n();
   return (
-    <footer className="shrink-0 h-12 px-4 border-t border-border-soft bg-white/70 flex items-center gap-4">
+    <footer className="shrink-0 h-12 px-4 border-t border-border-soft bg-white/70 flex items-center gap-3">
+      {/* 左下角恒定放版本号 */}
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200/80 text-[11.5px] font-mono font-semibold text-text-sub select-none">
+          v0.1.0
+        </span>
+      </div>
+
+      {/* 收益或统计提示：放在版本号的右边 */}
       {panel === "compress" ? (
-        <div className="text-[14px] text-text-main tabular-nums">
-          {t("footer.gain", { gain: (cmpGain / 1024 ** 3).toFixed(2) })}
+        <div className="text-[13.5px] text-text-main tabular-nums flex items-center gap-1.5 min-w-0">
+          <span className="text-border-soft">|</span>
+          <span className="truncate">{t("footer.gain", { gain: (cmpGain / 1024 ** 3).toFixed(2) })}</span>
         </div>
       ) : dlDoneCount > 0 ? (
-        <div className="text-[14px] text-text-main tabular-nums">
-          {t("footer.dlCount", { count: dlDoneCount })}
+        <div className="text-[13.5px] text-text-main tabular-nums flex items-center gap-1.5 min-w-0">
+          <span className="text-border-soft">|</span>
+          <span className="truncate">{t("footer.dlCount", { count: dlDoneCount })}</span>
         </div>
       ) : (
-        <div className="text-[14px] text-text-sub tabular-nums" />
+        <div className="text-[13.5px] text-text-sub tabular-nums" />
       )}
       <div className="flex-1" />
       <div
@@ -199,43 +209,69 @@ function App() {
     return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
 
-  /* 每次启动检查 ffmpeg 是否有新的稳定版（引擎就绪后仅检查一次，防高频重跑堵塞 RPC） */
+  /* 系统与组件更新检查状态 */
   const { ready: engReady, call: engCall, on: engOn } = useEngine();
-  const [ffmpegUpd, setFfmpegUpd] = useState<{ current: string; latest: string; nightly: boolean } | null>(null);
-  const [ffmpegBusy, setFfmpegBusy] = useState(false);      // 更新中
-  const [ffmpegPct, setFfmpegPct] = useState(0);            // 下载进度
-  const [ffmpegConfirm, setFfmpegConfirm] = useState(false); // 确认弹窗
-  const [ffmpegMsg, setFfmpegMsg] = useState<string | null>(null); // 完成/失败提示
-  const ffmpegCheckedRef = useRef(false);
-  useEffect(() => {
-    if (!engReady || ffmpegCheckedRef.current) return;
-    ffmpegCheckedRef.current = true;
-    let cancelled = false;
-    engCall("ffmpeg_check")
-      .then((r) => {
-        const rr = r as { ok?: boolean; current?: string; latest?: string; newer?: boolean; nightly?: boolean };
-        if (!cancelled && rr?.newer && rr.current && rr.latest) {
-          setFfmpegUpd({ current: rr.current, latest: rr.latest, nightly: !!rr.nightly });
+  type UpdateItem = {
+    id: string;
+    name: string;
+    role: string;
+    current: string;
+    latest: string;
+    newer: boolean;
+    nightly?: boolean;
+    url?: string;
+    is_app?: boolean;
+  };
+  const [updateItems, setUpdateItems] = useState<UpdateItem[]>([]);
+  const [hasAnyUpdate, setHasAnyUpdate] = useState(false);
+  const [updaterOpen, setUpdaterOpen] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updatingComp, setUpdatingComp] = useState<string | null>(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const autoCheckedRef = useRef(false);
+
+  /* 执行更新检查（可在启动时静默跑，也可在设置中点击手动跑） */
+  const doCheckUpdates = useCallback(
+    async (manual = false) => {
+      if (!engReady) return;
+      if (manual) setCheckingUpdates(true);
+      try {
+        const res = (await engCall("check_updates", { app_version: "0.1.0" })) as {
+          ok?: boolean;
+          has_update?: boolean;
+          items?: UpdateItem[];
+        };
+        if (res?.ok && Array.isArray(res.items)) {
+          setUpdateItems(res.items);
+          setHasAnyUpdate(Boolean(res.has_update));
+          if (manual || res.has_update) {
+            setUpdaterOpen(true);
+          }
         }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [engReady, engCall]);
+      } catch {
+        /* 静默处理 */
+      } finally {
+        if (manual) setCheckingUpdates(false);
+      }
+    },
+    [engReady, engCall],
+  );
+
+  /* 每次打开程序：就先做检查更新（静默发起一次） */
+  useEffect(() => {
+    if (!engReady || autoCheckedRef.current) return;
+    autoCheckedRef.current = true;
+    void doCheckUpdates(false);
+  }, [engReady, doCheckUpdates]);
 
   /* 真实任务完成跟踪：分别跟踪下载与压缩队列是否有真实任务自然完成（done）。
      用户手动清空/删除未完成任务不视为"任务完成" */
   const hasCompletedDlRef = useRef(false);
   const hasCompletedCmpRef = useRef(false);
 
-  /* 更新进度与任务完成事件（只注册一次） */
+  /* 监听核心引擎事件 */
   useEffect(() => {
     return engOn((ev) => {
-      if (ev.ev === "ffmpeg_progress") {
-        const p = (ev as { percent?: number }).percent;
-        if (typeof p === "number") setFfmpegPct(p);
-      }
       if ((ev as { state?: string }).state === "done") {
         if (ev.ev === "dl") hasCompletedDlRef.current = true;
         if (ev.ev === "cmp") hasCompletedCmpRef.current = true;
@@ -255,23 +291,21 @@ function App() {
     });
   }, [currLang]);
 
-  /* 一键更新：下载稳定版 → 自动替换（引擎内备份旧版，失败回滚） */
-  const doUpdate = async () => {
-    setFfmpegConfirm(false);
-    setFfmpegBusy(true);
-    setFfmpegPct(0);
+  /* 一键更新组件（支持更新 yt-dlp 和 ffmpeg/ffprobe） */
+  const doUpdateComponent = async (comp: "ytdlp" | "ffmpeg") => {
+    setUpdatingComp(comp);
     try {
-      const r = (await engCall("ffmpeg_update")) as { ok?: boolean; version?: string; error?: string };
-      if (r?.ok) {
-        setFfmpegMsg(r.version ? t("ffmpeg.success", { version: r.version }) : t("ffmpeg.successDefault"));
-        setFfmpegUpd(null);
+      const res = (await engCall("update_component", { component: comp })) as { ok?: boolean; error?: string };
+      if (res?.ok) {
+        // 更新完成后重新拉取一次版本状态
+        await doCheckUpdates(false);
       } else {
-        setFfmpegMsg(r?.error || t("ffmpeg.fail"));
+        alert(t("updater.fail", { err: res?.error || "未知错误" }));
       }
     } catch (e) {
-      setFfmpegMsg(String(e instanceof Error ? e.message : e));
+      alert(t("updater.fail", { err: String(e instanceof Error ? e.message : e) }));
     } finally {
-      setFfmpegBusy(false);
+      setUpdatingComp(null);
     }
   };
 
@@ -509,40 +543,6 @@ function App() {
           </div>
         </header>
         <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-          {/* ffmpeg 新版提示（启动检查一次；可关闭） */}
-          {ffmpegUpd && (
-            <div className="shrink-0 mx-4 mt-3 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[13.5px] text-amber-900">
-              <svg width="15" height="15" viewBox="0 0 24 24" className="shrink-0" style={{ color: "#B45309" }}>
-                <path d="M12 9v5m0 3.5v.5M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="flex-1 min-w-0">
-                {ffmpegUpd.nightly
-                  ? t("ffmpeg.nightlyTip", { current: ffmpegUpd.current, latest: ffmpegUpd.latest })
-                  : t("ffmpeg.newerTip", { current: ffmpegUpd.current, latest: ffmpegUpd.latest })}
-              </span>
-              <div className="shrink-0 flex items-center gap-2">
-                {ffmpegBusy ? (
-                  <span className="text-amber-800 text-[13px] tabular-nums">
-                    {ffmpegPct < 100 ? t("ffmpeg.downloading", { pct: ffmpegPct }) : t("ffmpeg.extracting")}
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => setFfmpegConfirm(true)}
-                    className="shrink-0 rounded-md bg-amber-600 px-3 py-1 text-white text-[13px] hover:bg-amber-700 cursor-pointer"
-                  >
-                    {t("ffmpeg.updateBtn")}
-                  </button>
-                )}
-                <button
-                  onClick={() => setFfmpegUpd(null)}
-                  disabled={ffmpegBusy}
-                  className="shrink-0 text-amber-700 hover:text-amber-900 cursor-pointer text-[13px] disabled:opacity-50"
-                >
-                  {t("ffmpeg.dismiss")}
-                </button>
-              </div>
-            </div>
-          )}
           {/* 两面板常驻挂载，display 切换——任务列表 state 不因切换面板丢失 */}
           <div className="flex-1 min-h-0 relative flex flex-col">
             <div className={panel === "download" ? "h-full w-full flex flex-col" : "hidden"}>
@@ -589,26 +589,158 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onChange={setSettings}
+        onCheckUpdates={() => void doCheckUpdates(true)}
+        checkingUpdates={checkingUpdates}
+        onOpenAbout={() => setAboutOpen(true)}
       />
-      {/* ffmpeg 一键更新确认 */}
-      <Dialog open={ffmpegConfirm} onClose={() => setFfmpegConfirm(false)} title={t("ffmpeg.dlgTitle")} width={480}>
-        <div className="text-[15px] leading-relaxed text-text-main">
-          <p>{t("ffmpeg.dlgDesc")}</p>
-          <p className="mt-2 text-text-sub text-[13px]">{t("ffmpeg.dlgHint")}</p>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setFfmpegConfirm(false)}>
-            {t("ffmpeg.cancel")}
-          </Button>
-          <Button onClick={() => void doUpdate()}>{t("ffmpeg.startUpdate")}</Button>
+
+      {/* 软件与组件更新弹窗 */}
+      <Dialog
+        open={updaterOpen}
+        onClose={() => !updatingComp && setUpdaterOpen(false)}
+        title={t("updater.title")}
+        width={560}
+      >
+        <div className="flex flex-col gap-4 text-text-main">
+          {/* 状态总览提示 */}
+          <div className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+            {hasAnyUpdate ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0 text-amber-500">
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0 text-emerald-500">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <polyline points="22 4 12 14.01 9 11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+            <span className="text-[13.5px] font-medium leading-relaxed">
+              {hasAnyUpdate ? t("updater.hasUpdate") : t("updater.upToDate")}
+            </span>
+          </div>
+
+          {/* 各组件列表卡片 */}
+          <div className="space-y-2.5">
+            {updateItems.map((item) => (
+              <div
+                key={item.id}
+                className="p-3.5 rounded-xl border border-border-soft bg-white hover:border-slate-300 transition-colors flex items-center justify-between gap-3 shadow-2xs"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[14px] text-text-main">{item.name}</span>
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded-md font-medium ${
+                        item.newer
+                          ? "bg-amber-100 text-amber-700 font-semibold"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {item.newer ? t("updater.updateAvailable") : t("updater.stableTag")}
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-text-sub mt-0.5">{item.role}</p>
+                  <div className="flex items-center gap-3 mt-1.5 text-[12px] tabular-nums">
+                    <span className="text-slate-500">
+                      {t("updater.current", { ver: item.current || "未知" })}
+                    </span>
+                    <span className="text-slate-300">|</span>
+                    <span className={item.newer ? "text-amber-600 font-semibold" : "text-slate-600"}>
+                      {t("updater.latest", { ver: item.latest || "未知" })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="shrink-0">
+                  {item.is_app ? (
+                    item.newer && item.url ? (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[12.5px] font-medium transition-colors shadow-2xs cursor-pointer"
+                      >
+                        <span>{t("updater.viewRelease")}</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </a>
+                    ) : null
+                  ) : item.newer ? (
+                    <Button
+                      size="sm"
+                      disabled={updatingComp !== null}
+                      onClick={() => void doUpdateComponent(item.id as "ytdlp" | "ffmpeg")}
+                    >
+                      {updatingComp === item.id ? t("updater.updating") : t("updater.updateNow")}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 flex justify-end">
+            <Button
+              variant="ghost"
+              disabled={updatingComp !== null}
+              onClick={() => setUpdaterOpen(false)}
+            >
+              {t("updater.close")}
+            </Button>
+          </div>
         </div>
       </Dialog>
 
-      {/* ffmpeg 更新完成/失败提示 */}
-      <Dialog open={!!ffmpegMsg} onClose={() => setFfmpegMsg(null)} title={t("ffmpeg.resultTitle")} width={440}>
-        <div className="text-[15px] text-text-main">{ffmpegMsg}</div>
-        <div className="mt-5 flex justify-end">
-          <Button onClick={() => setFfmpegMsg(null)}>{t("ffmpeg.ok")}</Button>
+      {/* 关于 eazyVid 弹窗 */}
+      <Dialog
+        open={aboutOpen}
+        onClose={() => setAboutOpen(false)}
+        title={t("about.title")}
+        width={460}
+      >
+        <div className="flex flex-col items-center text-center py-2 text-text-main">
+          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 shadow-xs mb-3">
+            <Logo size={56} />
+          </div>
+          <h3 className="text-[17px] font-bold text-slate-900 flex items-center gap-2">
+            <span>eazyVid</span>
+            <span className="text-[12px] font-mono font-semibold px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 border border-brand-200">
+              v0.1.0
+            </span>
+          </h3>
+          <p className="mt-2 text-[13.5px] text-text-sub max-w-[340px] leading-relaxed">
+            {t("about.desc")}
+          </p>
+
+          <div className="w-full mt-6 pt-5 border-t border-border-soft flex items-center justify-between">
+            <a
+              href="https://ko-fi.com/rayhu"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5E5B]/10 hover:bg-[#FF5E5B]/15 text-[#FF5E5B] border border-[#FF5E5B]/20 text-[12.5px] font-semibold transition-all cursor-pointer"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.683-2.566.012-.046 1.488-8.238 1.488-8.238s3.473-.393 4.316 2.274c.731 2.316-.762 3.842-1.996 4.343-.377.153-.393.582-.045.748 1.341.644 3.491-.659 3.864-2.428.455-2.155-.002-3.782-1.021-4.782zm-6.271 8.85c-.328.748-1.503 1.09-2.548 1.09H3.72c-.896 0-1.62-.724-1.62-1.62V6.355h14.717l-.807 8.443z"/>
+                <path d="M12.723 9.421c-.815-.992-2.145-1.129-3.033-.314-.888.815-.992 2.145-.314 3.033 1.037 1.353 3.347 3.398 3.347 3.398s2.31-2.045 3.347-3.398c.678-.888.574-2.218-.314-3.033-.888-.815-2.218-.678-3.033.314z"/>
+              </svg>
+              <span>{t("about.sponsor")}</span>
+            </a>
+
+            <a
+              href="https://github.com/Ray1979ANYWAY/eazyVid"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-black text-white text-[12.5px] font-medium transition-all shadow-2xs cursor-pointer"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+              </svg>
+              <span>GitHub</span>
+            </a>
+          </div>
         </div>
       </Dialog>
 

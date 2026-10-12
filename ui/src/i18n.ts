@@ -109,6 +109,10 @@ const DICT = {
   "settings.langSystem": { "zh-CN": "跟随系统", en: "System Default" },
   "settings.langZh": { "zh-CN": "简体中文", en: "简体中文" },
   "settings.langEn": { "zh-CN": "English", en: "English" },
+  "settings.updateCheck": { "zh-CN": "软件与组件", en: "Software & Components" },
+  "settings.updateCheckBtn": { "zh-CN": "检查更新", en: "Check for Updates" },
+  "settings.updateCheckHint": { "zh-CN": "检查主程序、下载核心及转码内核最新稳定版本", en: "Check latest stable releases for app and core engines" },
+  "settings.checking": { "zh-CN": "检查中…", en: "Checking..." },
   "settings.dlDir": { "zh-CN": "视频下载目录", en: "Download Directory" },
   "settings.dlDirDefault": { "zh-CN": "默认（安装目录\\downloaded）", en: "Default (App Directory\\downloaded)" },
   "settings.browse": { "zh-CN": "浏览", en: "Browse" },
@@ -125,6 +129,29 @@ const DICT = {
   "settings.overwrite": { "zh-CN": "压缩后覆盖原文件", en: "Overwrite original file after compression" },
   "settings.coverPrefix": { "zh-CN": "以第", en: "Extract frame at" },
   "settings.coverSuffix": { "zh-CN": "秒末帧为封面", en: "seconds as cover thumbnail" },
+
+  // About & Sponsor
+  "about.title": { "zh-CN": "关于 eazyVid", en: "About eazyVid" },
+  "about.desc": { "zh-CN": "原画原帧极速流媒体下载与视频瘦身工具", en: "Full-fidelity video streaming downloader & lossless compression tool" },
+  "about.sponsor": { "zh-CN": "赞助支持", en: "Sponsor" },
+  "about.sponsorTip": { "zh-CN": "在 Ko-fi 上赞助支持开发者", en: "Support developer on Ko-fi" },
+  "about.github": { "zh-CN": "GitHub 项目主页", en: "GitHub Project" },
+  "about.btn": { "zh-CN": "关于", en: "About" },
+
+  // Updater Dialog
+  "updater.title": { "zh-CN": "检查更新", en: "Software & Components Updates" },
+  "updater.upToDate": { "zh-CN": "当前主程序及所有底层组件均为最新稳定版", en: "The application and all core components are up to date." },
+  "updater.hasUpdate": { "zh-CN": "检测到以下程序或组件有最新稳定版本可用：", en: "Updates available for the following components:" },
+  "updater.current": { "zh-CN": "当前版本：{ver}", en: "Current: {ver}" },
+  "updater.latest": { "zh-CN": "最新稳定：{ver}", en: "Latest: {ver}" },
+  "updater.stableTag": { "zh-CN": "已是最新稳定版", en: "Up to date" },
+  "updater.updateAvailable": { "zh-CN": "发现新稳定版", en: "Update available" },
+  "updater.updateNow": { "zh-CN": "立即更新组件", en: "Update Components" },
+  "updater.updating": { "zh-CN": "正在更新…", en: "Updating..." },
+  "updater.viewRelease": { "zh-CN": "前往 Releases 下载", en: "Go to Releases" },
+  "updater.close": { "zh-CN": "关闭", en: "Close" },
+  "updater.success": { "zh-CN": "已成功更新至最新稳定版！", en: "Successfully updated to the latest stable release!" },
+  "updater.fail": { "zh-CN": "更新失败：{err}", en: "Update failed: {err}" },
 
   // Compress Panel
   "cmp.addVideos": { "zh-CN": "添加视频", en: "Add Videos" },

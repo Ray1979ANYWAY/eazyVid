@@ -420,11 +420,171 @@ def _ver_key(v):
         return (0, 0, 0)
 
 
+def _cmd_check_updates(req):
+    """检查全部组件与主程序的最新稳定版本：
+    1. eazyVid 主程序 (默认 0.1.0 vs GitHub latest release)
+    2. yt-dlp 视频下载核心 (本地版本 vs GitHub yt-dlp/yt-dlp latest release)
+    3. ffmpeg & ffprobe 音视频转码核心 (本地版本 vs gyan.dev/ffmpeg.org latest release)
+    返回结构清晰区分每个组件的名称、作用说明、当前版本与最新版本。"""
+    def _worker():
+        script = eazyvid.SCRIPT_DIR
+        app_cur = req.get("app_version", "0.1.0")
+        app_latest = app_cur
+        app_newer = False
+        app_url = "https://github.com/Ray1979ANYWAY/eazyVid/releases"
+
+        # 1. eazyVid 主程序检查
+        try:
+            import urllib.request
+            hreq = urllib.request.Request("https://api.github.com/repos/Ray1979ANYWAY/eazyVid/releases/latest",
+                                          headers={"User-Agent": "eazyVid"})
+            with urllib.request.urlopen(hreq, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                tag = (data.get("tag_name") or "").lstrip("v").strip()
+                if tag:
+                    app_latest = tag
+                    app_newer = _ver_key(app_latest) > _ver_key(app_cur)
+                    app_url = data.get("html_url") or app_url
+        except Exception:
+            pass
+
+        # 2. yt-dlp 版本检查
+        ytdlp_cur = ""
+        ytdlp_latest = ""
+        ytdlp_newer = False
+        try:
+            yt_bin = os.path.join(script, "yt-dlp.exe")
+            r = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
+                               creationflags=NO_WINDOW | 0x00004000)
+            ytdlp_cur = (r.stdout or "").strip()
+        except Exception:
+            pass
+        try:
+            import urllib.request
+            hreq = urllib.request.Request("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
+                                          headers={"User-Agent": "eazyVid"})
+            with urllib.request.urlopen(hreq, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                ytdlp_latest = (data.get("tag_name") or "").strip()
+                if ytdlp_cur and ytdlp_latest:
+                    ytdlp_newer = ytdlp_latest > ytdlp_cur
+        except Exception:
+            if not ytdlp_latest and ytdlp_cur:
+                ytdlp_latest = ytdlp_cur
+
+        # 3. ffmpeg & ffprobe 版本检查
+        ff_cur = ""
+        ff_cur_nightly = False
+        try:
+            ff = os.path.join(script, "ffmpeg.exe")
+            r = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
+                               creationflags=NO_WINDOW | 0x00004000)
+            m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
+            if m:
+                ff_cur = m.group(1)
+            else:
+                m = re.search(r"ffmpeg version (N-\d+[^\s]*)", r.stdout or "")
+                if m:
+                    ff_cur = m.group(1)
+                    ff_cur_nightly = True
+        except Exception:
+            pass
+        ff_latest = ""
+        # 优先读取 gyan.dev release-version（Windows 官方构建源，仅数字节，响应极快）
+        try:
+            import urllib.request
+            hreq = urllib.request.Request("https://www.gyan.dev/ffmpeg/builds/release-version",
+                                          headers={"User-Agent": "eazyVid/0.1.0"})
+            with urllib.request.urlopen(hreq, timeout=6) as resp:
+                txt = resp.read().decode("utf-8", "replace").strip()
+                m = re.search(r"(\d+\.\d+(?:\.\d+)?)", txt)
+                if m:
+                    ff_latest = m.group(1)
+        except Exception:
+            pass
+        # 备选读取 ffmpeg.org/releases/
+        if not ff_latest:
+            try:
+                import urllib.request
+                hreq = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(hreq, timeout=8) as resp:
+                    html = resp.read(65536).decode("utf-8", "replace")
+                    vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
+                    if vers:
+                        ff_latest = max(vers, key=_ver_key)
+            except Exception:
+                pass
+        if not ff_latest and ff_cur:
+            ff_latest = ff_cur
+        ff_newer = bool(ff_latest and ((ff_cur_nightly and ff_cur) or (ff_cur and _ver_key(ff_latest) > _ver_key(ff_cur))))
+
+        has_any_update = app_newer or ytdlp_newer or ff_newer
+
+        items = [
+            {
+                "id": "app",
+                "name": "eazyVid 主程序",
+                "role": "桌面界面与核心调度管理",
+                "current": app_cur,
+                "latest": app_latest,
+                "newer": app_newer,
+                "url": app_url,
+                "is_app": True,
+            },
+            {
+                "id": "ytdlp",
+                "name": "yt-dlp",
+                "role": "流媒体嗅探与多平台下载内核",
+                "current": ytdlp_cur,
+                "latest": ytdlp_latest,
+                "newer": ytdlp_newer,
+                "is_app": False,
+            },
+            {
+                "id": "ffmpeg",
+                "name": "ffmpeg / ffprobe",
+                "role": "音视频封装、硬件加速压制与解码内核",
+                "current": ff_cur,
+                "latest": ff_latest,
+                "newer": ff_newer,
+                "nightly": ff_cur_nightly,
+                "is_app": False,
+            },
+        ]
+        reply(req.get("id"), ok=True, has_update=has_any_update, items=items)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _cmd_update_component(req):
+    """更新单个组件：
+    - ytdlp: 调用 yt-dlp.exe -U 自动升级至最新稳定版
+    - ffmpeg: 执行完整稳定版下载替换流程"""
+    comp = req.get("component")
+    if comp == "ytdlp":
+        def _yt_worker():
+            try:
+                emit({"ev": "component_progress", "component": "ytdlp", "percent": 50})
+                yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
+                r = subprocess.run([yt_bin, "-U"], capture_output=True, text=True, timeout=120,
+                                   creationflags=NO_WINDOW | 0x00004000)
+                # 获取新版本号
+                r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
+                                    creationflags=NO_WINDOW | 0x00004000)
+                new_ver = (r2.stdout or "").strip()
+                emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
+                reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
+            except Exception as e:
+                reply(req.get("id"), ok=False, component="ytdlp", error=str(e))
+        threading.Thread(target=_yt_worker, daemon=True).start()
+    elif comp == "ffmpeg":
+        threading.Thread(target=_cmd_ffmpeg_update, args=(req,), daemon=True).start()
+    else:
+        reply(req.get("id"), ok=False, error=f"未知组件: {comp}")
+
+
 def _cmd_ffmpeg_check(req):
-    """检查 ffmpeg 是否有新的稳定版：本地版本 vs ffmpeg.org 官方 release 最新稳定版。
-    本地为 nightly/自编译（版本号 N-xxx）时也提示（建议换稳定版）。
-    网络失败/解析失败时静默返回（不打扰用户，newer=False）。
-    后台线程执行，绝不阻塞 RPC 主循环。"""
+    """旧接口兼容：检查 ffmpeg 是否有新的稳定版"""
     def _worker():
         cur = ""
         cur_nightly = False
@@ -452,7 +612,6 @@ def _cmd_ffmpeg_check(req):
                 latest = max(vers, key=_ver_key)
         except Exception:
             pass
-        # 本地是 nightly → 只要存在稳定版就提示；本地是稳定版 → 版本号严格更大才提示
         newer = bool(latest and ((cur_nightly and cur) or (cur and _ver_key(latest) > _ver_key(cur))))
         reply(req.get("id"), ok=True, current=cur, latest=latest, newer=newer, nightly=cur_nightly)
 
@@ -730,6 +889,10 @@ def main():
                 _cmd_cmp_stop(req)
             elif cmd == "cmp_scan_dir":
                 _cmd_cmp_scan_dir(req)
+            elif cmd == "check_updates":
+                _cmd_check_updates(req)
+            elif cmd == "update_component":
+                _cmd_update_component(req)
             elif cmd == "ffmpeg_check":
                 _cmd_ffmpeg_check(req)
             elif cmd == "ffmpeg_update":
