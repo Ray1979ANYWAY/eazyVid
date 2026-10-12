@@ -133,6 +133,7 @@ const DICT = {
   "settings.cmpWorkers": { "zh-CN": "同时压缩数", en: "Concurrent Compressions" },
   "settings.cmpWorkersHint": { "zh-CN": "建议不超过 3", en: "Recommended ≤ 3" },
   "settings.overwrite": { "zh-CN": "压缩后覆盖原文件", en: "Overwrite original file after compression" },
+  "settings.cover": { "zh-CN": "抽帧生成封面", en: "Extract video cover" },
   "settings.coverPrefix": { "zh-CN": "以第", en: "Extract frame at" },
   "settings.coverSuffix": { "zh-CN": "秒末帧为封面", en: "seconds as cover thumbnail" },
 

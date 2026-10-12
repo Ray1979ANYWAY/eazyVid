@@ -627,7 +627,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
         path: t.path,
         mode: t.mode,
         out_dir: outSame ? null : outDir || null,
-        cover_sec: doOverwrite && cover ? coverSec : null,
+        cover_sec: cover ? coverSec : null,
         overwrite: doOverwrite,
         limit: compressWorkers, // 引擎并发硬闸门：达上限拒绝启动（防 UI 竞态超发）
       })
