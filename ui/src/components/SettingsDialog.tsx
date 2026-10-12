@@ -53,16 +53,12 @@ export function SettingsDialog({
   onClose,
   settings,
   onChange,
-  onCheckUpdates,
-  checkingUpdates = false,
   onOpenAbout,
 }: {
   open: boolean;
   onClose: () => void;
   settings: Settings;
   onChange: (s: Settings) => void;
-  onCheckUpdates?: () => void;
-  checkingUpdates?: boolean;
   onOpenAbout?: () => void;
 }) {
   const { t } = useI18n();
@@ -94,6 +90,7 @@ export function SettingsDialog({
       onClose={onClose}
       title={t("settings.title")}
       width={600}
+      height={570}
       footer={
         <div className="px-5 py-3 border-t border-border-soft bg-slate-50/60 rounded-b-xl flex items-center justify-end">
           <button
@@ -106,7 +103,7 @@ export function SettingsDialog({
         </div>
       }
     >
-      <div className="space-y-4">
+      <div className="space-y-3 overflow-x-hidden">
         {/* 界面语言（跟随系统 / 简体中文 / 英文，默认跟随系统，未命中英文兜底） */}
         <FieldRow label={t("settings.lang")}>
           <div className="w-[200px]">
@@ -123,35 +120,15 @@ export function SettingsDialog({
           </div>
         </FieldRow>
 
-        {/* 检查更新入口：放在界面语言正下方 */}
-        <FieldRow label={t("settings.updateCheck")}>
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <button
-              type="button"
-              onClick={onCheckUpdates}
-              disabled={checkingUpdates}
-              className="px-3.5 py-1.5 rounded-lg border border-border-soft bg-white text-text-main text-[13.5px] font-medium hover:border-brand-400 hover:text-brand-600 shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors shrink-0"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={checkingUpdates ? "animate-spin text-brand-600" : ""}>
-                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-              </svg>
-              <span>{checkingUpdates ? t("settings.checking") : t("settings.updateCheckBtn")}</span>
-            </button>
-            <span className="text-[12px] text-text-sub truncate">
-              {t("settings.updateCheckHint")}
-            </span>
-          </div>
-        </FieldRow>
-
         <div className="h-px bg-border-soft" />
 
         {/* 下载目录 */}
         <FieldRow label={t("settings.dlDir")}>
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center truncate">
-              {settings.dlDir || t("settings.dlDirDefault")}
+            <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center min-w-0">
+              <span className="truncate">{settings.dlDir || t("settings.dlDirDefault")}</span>
             </div>
-            <IconBtn tip={t("settings.browse")} onClick={() => browse("dl")} className="w-8 h-8 border border-border-soft bg-white">
+            <IconBtn tip={t("settings.browse")} onClick={() => browse("dl")} className="w-8 h-8 border border-border-soft bg-white shrink-0">
               <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={15} />
             </IconBtn>
           </div>
@@ -167,10 +144,10 @@ export function SettingsDialog({
         {!outSame && (
           <FieldRow label={t("settings.outCustom")}>
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center truncate">
-                {settings.outDir || t("settings.outUnspecified")}
+              <div className="flex-1 h-8 px-3 rounded-md border border-border-soft bg-surface text-[14px] text-text-main flex items-center min-w-0">
+                <span className="truncate">{settings.outDir || t("settings.outUnspecified")}</span>
               </div>
-              <IconBtn tip={t("settings.browse")} onClick={() => browse("out")} className="w-8 h-8 border border-border-soft bg-white">
+              <IconBtn tip={t("settings.browse")} onClick={() => browse("out")} className="w-8 h-8 border border-border-soft bg-white shrink-0">
                 <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={15} />
               </IconBtn>
             </div>
@@ -182,13 +159,13 @@ export function SettingsDialog({
         {/* 并发数：同时下载数 + 同时压缩数 放一起 */}
         <FieldRow label={t("settings.dlWorkers")}>
           <NumberField value={settings.dlWorkers} onChange={(v) => set({ dlWorkers: v })} min={1} max={16} />
-          <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 ml-2">
+          <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 ml-2 break-words">
             {t("settings.dlWorkersHint")}
           </div>
         </FieldRow>
         <FieldRow label={t("settings.cmpWorkers")}>
           <NumberField value={settings.compressWorkers} onChange={(v) => set({ compressWorkers: v })} min={1} max={16} />
-          <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 ml-2">
+          <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 ml-2 break-words">
             {t("settings.cmpWorkersHint")}
           </div>
         </FieldRow>
@@ -200,10 +177,16 @@ export function SettingsDialog({
           <Toggle checked={overwrite} onChange={(v) => set({ overwrite: v })} disabled={!outSame} />
         </FieldRow>
         <FieldRow label="" disabled={!overwrite}>
-          <Toggle checked={cover} onChange={(v) => set({ cover: v })} disabled={!overwrite} />
-          <span className="text-[14px] text-text-main whitespace-nowrap">{t("settings.coverPrefix")}</span>
-          <NumberField value={settings.coverSec} onChange={(v) => set({ coverSec: v })} min={0} max={9999} disabled={!overwrite} />
-          <span className="text-[14px] text-text-main whitespace-nowrap">{t("settings.coverSuffix")}</span>
+          <div className="flex items-start gap-2.5 flex-1 min-w-0">
+            <div className="pt-0.5 shrink-0">
+              <Toggle checked={cover} onChange={(v) => set({ cover: v })} disabled={!overwrite} />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 min-w-0">
+              <span className="text-[14px] text-text-main shrink-0">{t("settings.coverPrefix")}</span>
+              <NumberField value={settings.coverSec} onChange={(v) => set({ coverSec: v })} min={0} max={9999} disabled={!overwrite} />
+              <span className="text-[14px] text-text-main leading-snug break-words">{t("settings.coverSuffix")}</span>
+            </div>
+          </div>
         </FieldRow>
       </div>
     </Dialog>

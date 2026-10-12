@@ -365,6 +365,7 @@ export function Dialog({
   children,
   footer,
   width = 520,
+  height,
 }: {
   open: boolean;
   onClose: () => void;
@@ -372,6 +373,7 @@ export function Dialog({
   children: ReactNode;
   footer?: ReactNode;
   width?: number;
+  height?: number;
 }) {
   const openTs = useRef(Date.now());
   useEffect(() => {
@@ -390,8 +392,8 @@ export function Dialog({
       }}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl shadow-brand-900/20 border border-border-soft flex flex-col max-h-[86vh]"
-        style={{ width }}
+        className="bg-white rounded-xl shadow-2xl shadow-brand-900/20 border border-border-soft flex flex-col max-h-[86vh] overflow-hidden"
+        style={{ width, ...(height ? { height } : {}) }}
       >
         <div className="flex items-center justify-between px-5 h-12 border-b border-border-soft shrink-0">
           <div className="text-[16px] font-semibold text-brand-800 font-display">{title}</div>
@@ -404,7 +406,7 @@ export function Dialog({
             </svg>
           </button>
         </div>
-        <div className="p-5 overflow-y-auto flex-1 min-h-0">{children}</div>
+        <div className="p-5 overflow-y-auto overflow-x-hidden flex-1 min-h-0">{children}</div>
         {footer && <div className="shrink-0">{footer}</div>}
       </div>
     </div>
@@ -425,9 +427,9 @@ export function FieldRow({
 }) {
   return (
     <div className={`flex items-center gap-3 min-h-10 ${disabled ? "opacity-45" : ""}`}>
-      <div className="w-[210px] shrink-0 text-[15px] text-text-main">{label}</div>
-      <div className="flex items-center gap-2 flex-1">{children}</div>
-      {hint && <div className="text-[12px] text-text-sub leading-4 shrink-0">{hint}</div>}
+      <div className="w-[210px] shrink-0 text-[15px] text-text-main leading-snug break-words">{label}</div>
+      <div className="flex items-center gap-2 flex-1 min-w-0">{children}</div>
+      {hint && <div className="text-[12px] text-text-sub leading-4 shrink-0 break-words">{hint}</div>}
     </div>
   );
 }

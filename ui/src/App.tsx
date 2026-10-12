@@ -245,6 +245,7 @@ function App() {
           setUpdateItems(res.items);
           setHasAnyUpdate(Boolean(res.has_update));
           if (manual || res.has_update) {
+            setAboutOpen(false);
             setUpdaterOpen(true);
           }
         }
@@ -589,8 +590,6 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onChange={setSettings}
-        onCheckUpdates={() => void doCheckUpdates(true)}
-        checkingUpdates={checkingUpdates}
         onOpenAbout={() => setAboutOpen(true)}
       />
 
@@ -715,7 +714,43 @@ function App() {
             {t("about.desc")}
           </p>
 
-          <div className="w-full mt-6 pt-5 border-t border-border-soft flex items-center justify-between">
+          {/* 软件与组件更新 */}
+          <div className="w-full mt-5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-3 text-left">
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-text-main flex items-center gap-1.5">
+                <span>{t("settings.updateCheck")}</span>
+                {hasAnyUpdate && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-medium bg-amber-100 text-amber-700 border border-amber-300">
+                    {t("updater.updateAvailable")}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11.5px] text-text-sub mt-0.5 leading-snug break-words">
+                {t("settings.updateCheckHint")}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant={hasAnyUpdate ? "primary" : "outline"}
+              disabled={checkingUpdates}
+              onClick={() => void doCheckUpdates(true)}
+              className="shrink-0"
+            >
+              {checkingUpdates ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <svg className="animate-spin h-3.5 w-3.5 text-current" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                  <span>{t("settings.checking")}</span>
+                </span>
+              ) : (
+                t("settings.updateCheckBtn")
+              )}
+            </Button>
+          </div>
+
+          <div className="w-full mt-5 pt-4 border-t border-border-soft flex items-center justify-between">
             <a
               href="https://ko-fi.com/rayhu"
               target="_blank"
