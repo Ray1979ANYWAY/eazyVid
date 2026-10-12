@@ -1,5 +1,7 @@
 # eazyVid
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Local video downloader & compressor — URL probe, deep sniffing, parallel download pool, auto compress queue.
 
 ## Run
@@ -11,4 +13,6 @@ Local video downloader & compressor — URL probe, deep sniffing, parallel downl
 
 > YouTube notes: if your IP is flagged (datacenter / shared IP), yt-dlp may return "Sign in to confirm you're not a bot". Fix: log in to YouTube once inside the eazyVid sniffer window — the login is remembered in `.eazyvid_profile/` and used automatically.
 
-_README WIP._
+## License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.

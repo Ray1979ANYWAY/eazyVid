@@ -709,6 +709,15 @@ function App() {
             <span className="text-[12px] font-mono font-semibold px-2 py-0.5 rounded-md bg-brand-50 text-brand-600 border border-brand-200">
               v0.1.0
             </span>
+            <a
+              href="https://github.com/Ray1979ANYWAY/eazyVid/blob/main/LICENSE"
+              target="_blank"
+              rel="noreferrer"
+              title="Apache License 2.0"
+              className="text-[11.5px] font-medium px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200 transition-colors cursor-pointer"
+            >
+              Apache-2.0
+            </a>
           </h3>
           <p className="mt-2 text-[13.5px] text-text-sub max-w-[340px] leading-relaxed">
             {t("about.desc")}
