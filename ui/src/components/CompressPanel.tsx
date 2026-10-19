@@ -819,98 +819,69 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                 onClick={pickVideos}
                 className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 dark:from-transparent dark:via-transparent dark:to-transparent dark:bg-card/40 dark:border-purple-900/60 dark:hover:border-purple-700/80 flex flex-col items-center justify-center p-8 text-center transition-all cursor-pointer group"
               >
-                {/* 核心插画：文件减重瘦身艺术隐喻 (放大版 850MB ➔ 210MB，一秒辨识为视频压缩) */}
-                <div className="relative w-64 h-44 mb-6 flex items-center justify-center transition-transform group-hover:scale-105 duration-300">
+                {/* 核心插画：放大版 C-Clamp 压缩器 (彻底去除左右卡片，强化独立辨识度) */}
+                <div className="relative flex flex-col items-center mb-3 transition-transform group-hover:scale-105 duration-300">
                   {/* 柔和紫色渐变底环 */}
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-2xl dark:opacity-30" />
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/25 via-pink-400/20 to-indigo-400/25 blur-2xl dark:opacity-40" />
 
-                  {/* 左侧：原始大视频文件 */}
-                  <div className="absolute -left-3 w-32 h-36 bg-card rounded-2xl border border-border-soft dark:border-slate-700/80 shadow-md p-3 flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
-                      <span className="text-[11px] font-mono font-semibold text-text-sub">MP4</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                      <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-500 flex items-center justify-center mb-1.5 shadow-xs">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
-                          <line x1="7" y1="2" x2="7" y2="22" />
-                          <line x1="17" y1="2" x2="17" y2="22" />
-                        </svg>
-                      </div>
-                      <span className="text-[14px] font-bold text-text-main">850 MB</span>
-                    </div>
-                    <span className="text-[10px] text-text-sub">{t("cmp.origSizeLabel")}</span>
+                  {/* C-Clamp台钳挤压视频帧图标 */}
+                  <div className="relative z-10 w-22 h-22 rounded-3xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-500 dark:from-purple-500 dark:via-indigo-500 dark:to-violet-400 text-white flex items-center justify-center shadow-2xl shadow-purple-500/35 dark:shadow-purple-950/70 p-3.5">
+                    <svg viewBox="0 0 48 48" fill="none" className="w-14 h-14 text-white">
+                      <defs>
+                        <mask id="cmpFilmHolesMask">
+                          <rect width="48" height="48" fill="white" />
+                          {/* 左侧胶片齿孔 */}
+                          <rect x="14.8" y="23" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="14.8" y="26.8" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="14.8" y="30.6" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="14.8" y="34.4" width="2" height="2" rx="0.5" fill="black" />
+                          {/* 右侧胶片齿孔 */}
+                          <rect x="26.2" y="23" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="26.2" y="26.8" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="26.2" y="30.6" width="2" height="2" rx="0.5" fill="black" />
+                          <rect x="26.2" y="34.4" width="2" height="2" rx="0.5" fill="black" />
+                          {/* 核心播放键镂空三角 */}
+                          <polygon points="19.5,25.5 19.5,33.5 25.8,29.5" fill="black" />
+                        </mask>
+                      </defs>
+
+                      {/* C-Clamp 钳身骨架 (环绕右侧有力包夹) */}
+                      <path
+                        d="M 13 16.5 C 13 13.5 15 12 19 12 H 34 C 38.5 12 42 15.5 42 20 V 36 C 42 40.5 38.5 44 34 44 H 19 C 15 44 13 42.5 13 39.5"
+                        stroke="currentColor"
+                        strokeWidth="4.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+
+                      {/* 顶部 T 型旋转把手 */}
+                      <rect x="10.5" y="2.5" width="22" height="3" rx="1.5" fill="currentColor" />
+                      <circle cx="10.5" cy="4" r="2.5" fill="currentColor" />
+                      <circle cx="32.5" cy="4" r="2.5" fill="currentColor" />
+
+                      {/* 螺旋下压丝杆 */}
+                      <rect x="20" y="5" width="3" height="12" rx="0.5" fill="currentColor" />
+                      <path d="M 18.5 7.5 h 6 M 18.5 10.5 h 6 M 18.5 13.5 h 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+
+                      {/* 挤压平压脚 */}
+                      <rect x="13" y="16.5" width="17" height="3" rx="1" fill="currentColor" />
+
+                      {/* 被强力压榨的胶片视频帧 */}
+                      <rect x="13" y="20" width="17" height="18.5" rx="2.5" fill="currentColor" mask="url(#cmpFilmHolesMask)" />
+                    </svg>
                   </div>
+                  <span className="relative z-10 mt-2 px-2.5 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[11px] font-bold tracking-tight shadow-xs">
+                    {t("cmp.slimmingBadge")}
+                  </span>
+                </div>
 
-                  {/* 中间：C-Clamp台钳挤压视频帧 (物理压榨减重视觉隐喻，告别误解的下载箭头) */}
-                  <div className="relative z-10 flex flex-col items-center">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-500 dark:from-purple-500 dark:via-indigo-500 dark:to-violet-400 text-white flex items-center justify-center shadow-xl shadow-purple-500/35 dark:shadow-purple-950/70 p-2 transition-transform hover:scale-105">
-                      <svg viewBox="0 0 48 48" fill="none" className="w-9 h-9 text-white">
-                        <defs>
-                          <mask id="cmpFilmHolesMask">
-                            <rect width="48" height="48" fill="white" />
-                            {/* 左侧胶片齿孔 */}
-                            <rect x="14.8" y="23" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="14.8" y="26.8" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="14.8" y="30.6" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="14.8" y="34.4" width="2" height="2" rx="0.5" fill="black" />
-                            {/* 右侧胶片齿孔 */}
-                            <rect x="26.2" y="23" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="26.2" y="26.8" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="26.2" y="30.6" width="2" height="2" rx="0.5" fill="black" />
-                            <rect x="26.2" y="34.4" width="2" height="2" rx="0.5" fill="black" />
-                            {/* 核心播放键镂空三角 */}
-                            <polygon points="19.5,25.5 19.5,33.5 25.8,29.5" fill="black" />
-                          </mask>
-                        </defs>
-
-                        {/* C-Clamp 钳身骨架 (环绕右侧有力包夹) */}
-                        <path
-                          d="M 13 16.5 C 13 13.5 15 12 19 12 H 34 C 38.5 12 42 15.5 42 20 V 36 C 42 40.5 38.5 44 34 44 H 19 C 15 44 13 42.5 13 39.5"
-                          stroke="currentColor"
-                          strokeWidth="4.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-
-                        {/* 顶部 T 型旋转把手 */}
-                        <rect x="10.5" y="2.5" width="22" height="3" rx="1.5" fill="currentColor" />
-                        <circle cx="10.5" cy="4" r="2.5" fill="currentColor" />
-                        <circle cx="32.5" cy="4" r="2.5" fill="currentColor" />
-
-                        {/* 螺旋下压丝杆 */}
-                        <rect x="20" y="5" width="3" height="12" rx="0.5" fill="currentColor" />
-                        <path d="M 18.5 7.5 h 6 M 18.5 10.5 h 6 M 18.5 13.5 h 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-
-                        {/* 挤压平压脚 */}
-                        <rect x="13" y="16.5" width="17" height="3" rx="1" fill="currentColor" />
-
-                        {/* 被强力压榨的胶片视频帧 (带有镂空播放三角与胶片齿孔，透出渐变紫底色) */}
-                        <rect x="13" y="20" width="17" height="18.5" rx="2.5" fill="currentColor" mask="url(#cmpFilmHolesMask)" />
-                      </svg>
-                    </div>
-                    <span className="mt-1.5 px-2 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[11px] font-bold tracking-tight shadow-xs">
-                      {t("cmp.slimmingBadge")}
-                    </span>
-                  </div>
-
-                  {/* 右侧：压缩后精炼小文件 */}
-                  <div className="absolute -right-3 w-32 h-36 bg-card rounded-2xl border border-purple-200 dark:border-purple-800/60 shadow-md p-3 flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                      <span className="text-[11px] font-mono text-purple-600 dark:text-purple-300 font-bold">OPTIMIZED</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1.5 shadow-xs">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                          <polyline points="22 4 12 14.01 9 11.01" />
-                        </svg>
-                      </div>
-                      <span className="text-[14px] font-bold text-emerald-700 dark:text-emerald-300">210 MB</span>
-                    </div>
-                    <span className="text-[10px] text-text-sub">{t("cmp.optSizeLabel")}</span>
+                {/* 图标与文案之间的带方框 + 号 (直观指示把文件或文件夹拖入此处) */}
+                <div className="my-2.5 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-lg border-2 border-dashed border-purple-400/90 dark:border-purple-500/80 bg-purple-50/90 dark:bg-purple-950/50 text-purple-600 dark:text-purple-300 flex items-center justify-center shadow-xs transition-transform group-hover:scale-110 duration-200">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
                   </div>
                 </div>
 
@@ -918,7 +889,7 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                 <h3 className="text-[18px] font-bold text-text-main tracking-tight">
                   {t("cmp.emptyTitle")}
                 </h3>
-                <p className="mt-1.5 text-[13.5px] text-text-sub max-w-md leading-relaxed">
+                <p className="mt-1 text-[13.5px] text-text-sub max-w-md leading-relaxed">
                   {t("cmp.emptyDesc")}
                 </p>
               </div>
