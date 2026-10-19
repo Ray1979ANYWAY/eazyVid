@@ -985,64 +985,58 @@ export function DownloadPanel({
         >
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center p-6 text-center select-none">
-              {/* 现代通用流媒体矢量抽象插画（方案 B：艺术化规避商标侵权） */}
-              <div className="relative w-36 h-36 mb-4 flex items-center justify-center">
+              {/* 现代通用流媒体矢量抽象插画 (放大版) */}
+              <div className="relative w-48 h-48 mb-6 flex items-center justify-center">
                 {/* 柔和呼吸渐变底环 */}
-                <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-brand-500/20 via-blue-400/15 to-purple-400/20 blur-xl dark:opacity-30" />
+                <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-brand-500/20 via-blue-400/15 to-purple-400/20 blur-2xl dark:opacity-30" />
 
                 {/* 悬浮主卡片 */}
-                <div className="relative w-28 h-24 bg-card/95 backdrop-blur-md rounded-2xl border border-border-soft dark:border-slate-700/80 shadow-lg p-2.5 flex flex-col justify-between">
+                <div className="relative w-36 h-30 bg-card/95 backdrop-blur-md rounded-2xl border border-border-soft dark:border-slate-700/80 shadow-xl p-3.5 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <div className="flex gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-brand-500" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
+                    <div className="flex gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-brand-500" />
+                      <span className="w-2 h-2 rounded-full bg-blue-400" />
+                      <span className="w-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" />
                     </div>
-                    <div className="flex items-center gap-0.5">
+                    <div className="flex items-center gap-1">
                       <span className="w-1 h-3 rounded-full bg-brand-500/60" />
-                      <span className="w-1 h-4 rounded-full bg-brand-600 dark:bg-brand-400" />
-                      <span className="w-1 h-2 rounded-full bg-brand-400/50" />
+                      <span className="w-1 h-5 rounded-full bg-brand-600 dark:bg-brand-400" />
+                      <span className="w-1 h-2.5 rounded-full bg-brand-400/50" />
                     </div>
                   </div>
 
-                  <div className="w-9 h-9 mx-auto rounded-xl bg-gradient-to-br from-brand-600 to-indigo-700 text-white flex items-center justify-center shadow-md shadow-brand-500/25">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-brand-600 to-indigo-700 text-white flex items-center justify-center shadow-lg shadow-brand-500/25">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M8 5v14l11-7z" />
                     </svg>
                   </div>
 
-                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                     <div className="bg-gradient-to-r from-brand-500 to-indigo-500 h-full w-2/3 rounded-full" />
                   </div>
                 </div>
 
                 {/* 右上角流媒体链接节点微标 */}
-                <div className="absolute -top-1 -right-1 w-8 h-8 rounded-xl bg-card border border-border-soft dark:border-slate-700/80 shadow-sm flex items-center justify-center text-brand-600 dark:text-brand-300">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <div className="absolute -top-1 -right-1 w-10 h-10 rounded-2xl bg-card border border-border-soft dark:border-slate-700/80 shadow-md flex items-center justify-center text-brand-600 dark:text-brand-300">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                   </svg>
                 </div>
 
                 {/* 左下角高清规格标签 */}
-                <div className="absolute -bottom-1 -left-1 px-1.5 py-0.5 rounded-md bg-card border border-border-soft dark:border-slate-700/80 shadow-xs text-[10px] font-bold tracking-wider text-indigo-700 dark:text-indigo-300 font-mono">
+                <div className="absolute -bottom-1 -left-1 px-2 py-0.5 rounded-lg bg-card border border-border-soft dark:border-slate-700/80 shadow-xs text-[11px] font-bold tracking-wider text-indigo-700 dark:text-indigo-300 font-mono">
                   4K HDR
                 </div>
               </div>
 
-              {/* 标题与快捷提示 */}
-              <h3 className="text-[16px] font-bold text-text-main tracking-tight">
+              {/* 标题 */}
+              <h3 className="text-[18px] font-bold text-text-main tracking-tight">
                 {t("dl.emptyTitle")}
               </h3>
-              <p className="mt-1.5 text-[13px] text-text-sub max-w-md leading-relaxed">
-                {t("dl.emptyDesc")}
-              </p>
 
-              {/* 纯文本中性合规胶囊 Tag（方案 A：无商标版权风险） */}
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-2 max-w-lg">
-                <span className="text-[12px] text-text-sub/70 font-medium mr-1">
-                  {t("dl.emptyTagSupport")}
-                </span>
+              {/* 纯文本中性合规胶囊 Tag（已去掉“广泛支持：”前缀） */}
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2 max-w-lg">
 
                 <span
                   onClick={() => {

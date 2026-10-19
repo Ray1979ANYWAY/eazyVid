@@ -815,35 +815,38 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
         >
           {tasks.length === 0 ? (
             <div className="h-full flex flex-col p-2 select-none">
-              <div className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 dark:from-transparent dark:via-transparent dark:to-transparent dark:bg-card/40 dark:border-purple-900/60 dark:hover:border-purple-700/80 flex flex-col items-center justify-center p-6 text-center transition-all">
-                {/* 核心插画：文件减重瘦身艺术隐喻 (850MB ➔ 210MB，一秒辨识为视频压缩) */}
-                <div className="relative w-48 h-36 mb-4 flex items-center justify-center">
+              <div
+                onClick={pickVideos}
+                className="flex-1 rounded-2xl border-2 border-dashed border-purple-300/70 hover:border-purple-400 bg-gradient-to-b from-purple-50/30 via-white to-purple-50/20 dark:from-transparent dark:via-transparent dark:to-transparent dark:bg-card/40 dark:border-purple-900/60 dark:hover:border-purple-700/80 flex flex-col items-center justify-center p-8 text-center transition-all cursor-pointer group"
+              >
+                {/* 核心插画：文件减重瘦身艺术隐喻 (放大版 850MB ➔ 210MB，一秒辨识为视频压缩) */}
+                <div className="relative w-64 h-44 mb-6 flex items-center justify-center transition-transform group-hover:scale-105 duration-300">
                   {/* 柔和紫色渐变底环 */}
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-xl dark:opacity-30" />
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-400/20 via-pink-400/15 to-indigo-400/20 blur-2xl dark:opacity-30" />
 
                   {/* 左侧：原始大视频文件 */}
-                  <div className="absolute -left-2 w-24 h-28 bg-card rounded-xl border border-border-soft dark:border-slate-700/80 shadow-md p-2 flex flex-col justify-between">
+                  <div className="absolute -left-3 w-32 h-36 bg-card rounded-2xl border border-border-soft dark:border-slate-700/80 shadow-md p-3 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="w-2 h-2 rounded-full bg-rose-400" />
-                      <span className="text-[10px] font-mono text-text-sub">MP4</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+                      <span className="text-[11px] font-mono font-semibold text-text-sub">MP4</span>
                     </div>
                     <div className="flex flex-col items-center">
-                      <div className="w-8 h-8 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-500 flex items-center justify-center mb-1">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-500 flex items-center justify-center mb-1.5 shadow-xs">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
                           <line x1="7" y1="2" x2="7" y2="22" />
                           <line x1="17" y1="2" x2="17" y2="22" />
                         </svg>
                       </div>
-                      <span className="text-[12px] font-bold text-text-main">850 MB</span>
+                      <span className="text-[14px] font-bold text-text-main">850 MB</span>
                     </div>
-                    <span className="text-[9px] text-text-sub">{t("cmp.origSizeLabel")}</span>
+                    <span className="text-[10px] text-text-sub">{t("cmp.origSizeLabel")}</span>
                   </div>
 
                   {/* 中间：C-Clamp台钳挤压视频帧 (物理压榨减重视觉隐喻，告别误解的下载箭头) */}
                   <div className="relative z-10 flex flex-col items-center">
-                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-500 dark:from-purple-500 dark:via-indigo-500 dark:to-violet-400 text-white flex items-center justify-center shadow-lg shadow-purple-500/30 dark:shadow-purple-950/60 p-1.5 transition-transform hover:scale-105">
-                      <svg viewBox="0 0 48 48" fill="none" className="w-7 h-7 text-white">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-violet-500 dark:from-purple-500 dark:via-indigo-500 dark:to-violet-400 text-white flex items-center justify-center shadow-xl shadow-purple-500/35 dark:shadow-purple-950/70 p-2 transition-transform hover:scale-105">
+                      <svg viewBox="0 0 48 48" fill="none" className="w-9 h-9 text-white">
                         <defs>
                           <mask id="cmpFilmHolesMask">
                             <rect width="48" height="48" fill="white" />
@@ -887,117 +890,37 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                         <rect x="13" y="20" width="17" height="18.5" rx="2.5" fill="currentColor" mask="url(#cmpFilmHolesMask)" />
                       </svg>
                     </div>
-                    <span className="mt-1 px-1.5 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[10px] font-bold tracking-tight shadow-sm">
+                    <span className="mt-1.5 px-2 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[11px] font-bold tracking-tight shadow-xs">
                       {t("cmp.slimmingBadge")}
                     </span>
                   </div>
 
                   {/* 右侧：压缩后精炼小文件 */}
-                  <div className="absolute -right-2 w-24 h-28 bg-card rounded-xl border border-purple-200 dark:border-purple-800/60 shadow-md p-2 flex flex-col justify-between">
+                  <div className="absolute -right-3 w-32 h-36 bg-card rounded-2xl border border-purple-200 dark:border-purple-800/60 shadow-md p-3 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-mono text-purple-600 dark:text-purple-300 font-bold">OPTIMIZED</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <span className="text-[11px] font-mono text-purple-600 dark:text-purple-300 font-bold">OPTIMIZED</span>
                     </div>
                     <div className="flex flex-col items-center">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-1.5 shadow-xs">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                           <polyline points="22 4 12 14.01 9 11.01" />
                         </svg>
                       </div>
-                      <span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-300">210 MB</span>
+                      <span className="text-[14px] font-bold text-emerald-700 dark:text-emerald-300">210 MB</span>
                     </div>
-                    <span className="text-[9px] text-text-sub">{t("cmp.optSizeLabel")}</span>
+                    <span className="text-[10px] text-text-sub">{t("cmp.optSizeLabel")}</span>
                   </div>
                 </div>
 
                 {/* 标题与副标题 */}
-                <h3 className="text-[17px] font-bold text-text-main tracking-tight">
+                <h3 className="text-[18px] font-bold text-text-main tracking-tight">
                   {t("cmp.emptyTitle")}
                 </h3>
                 <p className="mt-1.5 text-[13.5px] text-text-sub max-w-md leading-relaxed">
                   {t("cmp.emptyDesc")}
                 </p>
-
-                {/* 快速操作大按钮组 */}
-                <div className="mt-5 flex items-center gap-3">
-                  <Button onClick={pickVideos} disabled={busy} className="px-5 h-10 text-[13.5px]">
-                    <Icon d="M12 5v14M5 12h14" size={14} />
-                    <span>{t("cmp.btnBrowseFiles")}</span>
-                  </Button>
-                  <Button variant="soft" onClick={pickFolder} disabled={busy} className="px-5 h-10 text-[13.5px]">
-                    <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={14} />
-                    <span>{busy ? t("cmp.scanning") : t("cmp.btnBrowseFolder")}</span>
-                  </Button>
-                </div>
-
-                {/* 底部常用模式速选卡片 */}
-                <div className="mt-7 pt-5 border-t border-border-soft w-full max-w-xl">
-                  <div className="text-[12px] text-text-sub/70 font-medium mb-2.5">
-                    {t("cmp.presetQuickSelect")}
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-left">
-                    <div
-                      onClick={() => setDefMode("default")}
-                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                        defMode === "default"
-                          ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300/40 dark:bg-emerald-950/45 dark:border-emerald-400 dark:ring-emerald-500/25"
-                          : "border-emerald-200/80 bg-emerald-50/50 hover:bg-emerald-100/70 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-emerald-900 dark:text-emerald-200">{t("mode.default")}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      </div>
-                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5 leading-tight">{t("cmp.presetDescDefault")}</p>
-                    </div>
-
-                    <div
-                      onClick={() => setDefMode("hq")}
-                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                        defMode === "hq"
-                          ? "border-sky-400 bg-sky-50 ring-2 ring-sky-300/40 dark:bg-sky-950/45 dark:border-sky-400 dark:ring-sky-500/25"
-                          : "border-sky-200/80 bg-sky-50/50 hover:bg-sky-100/70 dark:border-sky-900/60 dark:bg-sky-950/25 dark:hover:bg-sky-950/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-sky-900 dark:text-sky-200">{t("mode.hq")}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-                      </div>
-                      <p className="text-[11px] text-sky-700/80 dark:text-sky-400/80 mt-0.5 leading-tight">{t("cmp.presetDescHq")}</p>
-                    </div>
-
-                    <div
-                      onClick={() => setDefMode("fast")}
-                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                        defMode === "fast"
-                          ? "border-amber-400 bg-amber-50 ring-2 ring-amber-300/40 dark:bg-amber-950/45 dark:border-amber-400 dark:ring-amber-500/25"
-                          : "border-amber-200/80 bg-amber-50/50 hover:bg-amber-100/70 dark:border-amber-900/60 dark:bg-amber-950/25 dark:hover:bg-amber-950/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-amber-900 dark:text-amber-200">{t("mode.fast")}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      </div>
-                      <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-0.5 leading-tight">{t("cmp.presetDescFast")}</p>
-                    </div>
-
-                    <div
-                      onClick={() => setDefMode("av1")}
-                      className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                        defMode === "av1"
-                          ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-300/40 dark:bg-indigo-950/45 dark:border-indigo-400 dark:ring-indigo-500/25"
-                          : "border-indigo-200/80 bg-indigo-50/50 hover:bg-indigo-100/70 dark:border-indigo-900/60 dark:bg-indigo-950/25 dark:hover:bg-indigo-950/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12.5px] font-bold text-indigo-900 dark:text-indigo-200">{t("mode.av1")}</span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                      </div>
-                      <p className="text-[11px] text-indigo-700/80 dark:text-indigo-400/80 mt-0.5 leading-tight">{t("cmp.presetDescAv1")}</p>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           ) : (
