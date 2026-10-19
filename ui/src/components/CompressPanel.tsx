@@ -870,13 +870,10 @@ export const CompressPanel = forwardRef<CompressPanelHandle, {
                       <rect x="13" y="20" width="17" height="18.5" rx="2.5" fill="currentColor" mask="url(#cmpFilmHolesMask)" />
                     </svg>
                   </div>
-                  <span className="relative z-10 mt-2 px-2.5 py-0.5 rounded-full bg-purple-100/90 dark:bg-purple-950/80 border border-purple-200/60 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-[11px] font-bold tracking-tight shadow-xs">
-                    {t("cmp.slimmingBadge")}
-                  </span>
                 </div>
 
                 {/* 图标与文案之间的带方框 + 号 (直观指示把文件或文件夹拖入此处) */}
-                <div className="my-2.5 flex items-center justify-center">
+                <div className="my-3 flex items-center justify-center">
                   <div className="w-8 h-8 rounded-lg border-2 border-dashed border-purple-400/90 dark:border-purple-500/80 bg-purple-50/90 dark:bg-purple-950/50 text-purple-600 dark:text-purple-300 flex items-center justify-center shadow-xs transition-transform group-hover:scale-110 duration-200">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                       <line x1="12" y1="5" x2="12" y2="19" />
