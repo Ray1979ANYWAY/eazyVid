@@ -420,8 +420,123 @@ def _ver_key(v):
         return (0, 0, 0)
 
 
+# ==============================================================================
+# 多源加速镜像池与自动回退机制 (国内用户更新加速与故障转移)
+# ==============================================================================
+GITHUB_MIRRORS = [
+    "",                             # 1. 优先直连 / 嗅探本地系统代理 (Clash等)
+    "https://gh-proxy.com/",        # 2. 稳定镜像 A (支持 API 与二进制)
+    "https://ghfast.top/",          # 3. 稳定镜像 B (大文件下载极速)
+    "https://ghproxy.net/",         # 4. 备用镜像 C
+]
+
+
+def _get_proxy_opener():
+    """获取带本地代理的 opener (若用户开启了代理)"""
+    try:
+        import urllib.request
+        proxies = urllib.request.getproxies()
+        if proxies.get("http") or proxies.get("https"):
+            return urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    except Exception:
+        pass
+    import urllib.request
+    return urllib.request.build_opener()
+
+
+def _fetch_github_latest(repo: str, timeout: int = 8) -> dict:
+    """多源镜像自动轮询获取 GitHub Release Latest JSON"""
+    import urllib.request
+    api_path = f"https://api.github.com/repos/{repo}/releases/latest"
+    proxy_opener = _get_proxy_opener()
+
+    candidates = [api_path]
+    for m in GITHUB_MIRRORS:
+        if m:
+            candidates.append(f"{m}{api_path}")
+
+    for url in candidates:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "eazyVid/0.1.0"})
+            # 只有官方原链接使用代理 opener，镜像站使用普通直连 opener
+            opener = proxy_opener if url == api_path else urllib.request.build_opener()
+            with opener.open(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                    if data.get("tag_name"):
+                        return data
+        except Exception:
+            continue
+    return {}
+
+
+def _download_file_with_mirrors(raw_url: str, dest_path: str, progress_cb=None, timeout: int = 20) -> bool:
+    """多源镜像自动回退的流式下载器，支持断点重试与安全原子文件替换"""
+    import urllib.request
+    proxy_opener = _get_proxy_opener()
+
+    candidates = [raw_url]
+    for m in GITHUB_MIRRORS:
+        if m:
+            candidates.append(f"{m}{raw_url}")
+
+    for url in candidates:
+        tmp_path = dest_path + f".tmp_{os.getpid()}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            opener = proxy_opener if url == raw_url else urllib.request.build_opener()
+            with opener.open(req, timeout=timeout) as resp:
+                if resp.status != 200:
+                    continue
+                total = int(resp.headers.get("Content-Length") or 0)
+                downloaded = 0
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_cb and total > 0:
+                            pct = min(99, int((downloaded / total) * 100))
+                            progress_cb(pct)
+
+                # 校验文件有效性 (大小 > 1MB 且针对 exe 校验 MZ 头)
+                if os.path.exists(tmp_path):
+                    size = os.path.getsize(tmp_path)
+                    if size > 1_000_000:
+                        if dest_path.lower().endswith(".exe"):
+                            with open(tmp_path, "rb") as check_f:
+                                if check_f.read(2) != b"MZ":
+                                    try: os.remove(tmp_path)
+                                    except Exception: pass
+                                    continue
+                        # 安全原子替换 Windows 下运行中或被锁定的二进制
+                        old_path = dest_path + ".old"
+                        if os.path.exists(old_path):
+                            try: os.remove(old_path)
+                            except Exception: pass
+                        if os.path.exists(dest_path):
+                            try: os.replace(dest_path, old_path)
+                            except Exception:
+                                try: os.rename(dest_path, old_path)
+                                except Exception: pass
+                        os.replace(tmp_path, dest_path)
+                        try:
+                            if os.path.exists(old_path): os.remove(old_path)
+                        except Exception: pass
+                        if progress_cb: progress_cb(100)
+                        return True
+        except Exception:
+            if os.path.exists(tmp_path):
+                try: os.remove(tmp_path)
+                except Exception: pass
+            continue
+    return False
+
+
 def _cmd_check_updates(req):
-    """检查全部组件与主程序的最新稳定版本：
+    """检查全部组件与主程序的最新稳定版本 (带多源镜像自动故障转移)：
     1. eazyVid 主程序 (默认 0.1.0 vs GitHub latest release)
     2. yt-dlp 视频下载核心 (本地版本 vs GitHub yt-dlp/yt-dlp latest release)
     3. ffmpeg & ffprobe 音视频转码核心 (本地版本 vs gyan.dev/ffmpeg.org latest release)
@@ -433,22 +548,16 @@ def _cmd_check_updates(req):
         app_newer = False
         app_url = "https://github.com/Ray1979ANYWAY/eazyVid/releases"
 
-        # 1. eazyVid 主程序检查
-        try:
-            import urllib.request
-            hreq = urllib.request.Request("https://api.github.com/repos/Ray1979ANYWAY/eazyVid/releases/latest",
-                                          headers={"User-Agent": "eazyVid"})
-            with urllib.request.urlopen(hreq, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                tag = (data.get("tag_name") or "").lstrip("v").strip()
-                if tag:
-                    app_latest = tag
-                    app_newer = _ver_key(app_latest) > _ver_key(app_cur)
-                    app_url = data.get("html_url") or app_url
-        except Exception:
-            pass
+        # 1. eazyVid 主程序检查 (多源镜像自动轮询兜底)
+        app_data = _fetch_github_latest("Ray1979ANYWAY/eazyVid")
+        if app_data.get("tag_name"):
+            tag = app_data["tag_name"].lstrip("v").strip()
+            if tag:
+                app_latest = tag
+                app_newer = _ver_key(app_latest) > _ver_key(app_cur)
+                app_url = app_data.get("html_url") or app_url
 
-        # 2. yt-dlp 版本检查
+        # 2. yt-dlp 版本检查 (多源镜像自动轮询兜底)
         ytdlp_cur = ""
         ytdlp_latest = ""
         ytdlp_newer = False
@@ -460,25 +569,22 @@ def _cmd_check_updates(req):
             ytdlp_cur = (r.stdout or "").strip()
         except Exception:
             pass
-        try:
-            import urllib.request
-            hreq = urllib.request.Request("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
-                                          headers={"User-Agent": "eazyVid"})
-            with urllib.request.urlopen(hreq, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                ytdlp_latest = (data.get("tag_name") or "").strip()
-                if ytdlp_cur and ytdlp_latest:
-                    ytdlp_newer = ytdlp_latest > ytdlp_cur
-        except Exception:
-            if not ytdlp_latest and ytdlp_cur:
-                ytdlp_latest = ytdlp_cur
 
-        # 3. ffmpeg & ffprobe 版本检查
+        ytdlp_data = _fetch_github_latest("yt-dlp/yt-dlp")
+        if ytdlp_data.get("tag_name"):
+            ytdlp_latest = ytdlp_data["tag_name"].strip()
+            if ytdlp_cur and ytdlp_latest:
+                ytdlp_newer = ytdlp_latest > ytdlp_cur
+        if not ytdlp_latest and ytdlp_cur:
+            ytdlp_latest = ytdlp_cur
+
+        # 3. ffmpeg & ffprobe 版本检查 (优先 gyan.dev，支持本地代理)
         ff_cur = ""
         ff_cur_nightly = False
         try:
             ff = os.path.join(script, "ffmpeg.exe")
             r = subprocess.run([ff, "-version"], capture_output=True, text=True, timeout=10,
+                               stdin=subprocess.DEVNULL,
                                creationflags=NO_WINDOW | 0x00004000)
             m = re.search(r"ffmpeg version (\d+\.\d+(?:\.\d+)?)", r.stdout or "")
             if m:
@@ -491,12 +597,12 @@ def _cmd_check_updates(req):
         except Exception:
             pass
         ff_latest = ""
-        # 优先读取 gyan.dev release-version（Windows 官方构建源，仅数字节，响应极快）
+        proxy_opener = _get_proxy_opener()
+        # 优先读取 gyan.dev release-version
         try:
-            import urllib.request
             hreq = urllib.request.Request("https://www.gyan.dev/ffmpeg/builds/release-version",
                                           headers={"User-Agent": "eazyVid/0.1.0"})
-            with urllib.request.urlopen(hreq, timeout=6) as resp:
+            with proxy_opener.open(hreq, timeout=6) as resp:
                 txt = resp.read().decode("utf-8", "replace").strip()
                 m = re.search(r"(\d+\.\d+(?:\.\d+)?)", txt)
                 if m:
@@ -506,9 +612,8 @@ def _cmd_check_updates(req):
         # 备选读取 ffmpeg.org/releases/
         if not ff_latest:
             try:
-                import urllib.request
                 hreq = urllib.request.Request("https://ffmpeg.org/releases/", headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(hreq, timeout=8) as resp:
+                with proxy_opener.open(hreq, timeout=8) as resp:
                     html = resp.read(65536).decode("utf-8", "replace")
                     vers = re.findall(r"ffmpeg-(\d+\.\d+(?:\.\d+)?)\.tar\.", html)
                     if vers:
@@ -559,54 +664,53 @@ def _cmd_check_updates(req):
 
 def _cmd_update_component(req):
     """更新单个组件：
-    - ytdlp: 调用 yt-dlp.exe -U 自动升级至最新稳定版
+    - ytdlp: 智能双轨升级（代理环境下优先 -U，无代理或失败自动切换多源加速镜像池高速替换）
     - ffmpeg: 执行完整稳定版下载替换流程"""
     comp = req.get("component")
     if comp == "ytdlp":
         def _yt_worker():
+            yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
+            updated = False
+
+            # 策略 1: 若检测到系统/本地代理 (如 Clash 127.0.0.1:7897)，尝试先走 yt-dlp -U
             try:
-                emit({"ev": "component_progress", "component": "ytdlp", "percent": 30})
-                yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
-                cmd = [yt_bin, "-U"]
+                proxies = urllib.request.getproxies()
+                proxy_url = proxies.get("https") or proxies.get("http") or ""
+                if proxy_url:
+                    emit({"ev": "component_progress", "component": "ytdlp", "percent": 25})
+                    cmd = [yt_bin, "-U", "--proxy", proxy_url]
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                                       stdin=subprocess.DEVNULL,
+                                       creationflags=NO_WINDOW | 0x00004000)
+                    if r.returncode == 0:
+                        updated = True
+            except Exception:
+                pass
 
-                # 自动继承系统/本地代理 (如 Clash 127.0.0.1:7897)，加速 GitHub Release 下载
-                try:
-                    import urllib.request
-                    proxies = urllib.request.getproxies()
-                    proxy_url = proxies.get("https") or proxies.get("http") or ""
-                    if proxy_url:
-                        cmd.extend(["--proxy", proxy_url])
-                except Exception:
-                    pass
+            # 策略 2: 若无代理或 -U 失败/超时，自动切换「多源加速镜像池」直接下载最新二进制
+            if not updated:
+                emit({"ev": "component_progress", "component": "ytdlp", "percent": 20})
+                def _on_dl_pct(pct):
+                    # 将下载进度平滑映射为 20% ~ 90%
+                    emit({"ev": "component_progress", "component": "ytdlp", "percent": 20 + int(pct * 0.7)})
 
-                # 增加超时到 300s，设置 stdin=DEVNULL 避免管道继承假死
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
-                                   stdin=subprocess.DEVNULL,
-                                   creationflags=NO_WINDOW | 0x00004000)
-                emit({"ev": "component_progress", "component": "ytdlp", "percent": 80})
+                raw_download_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+                updated = _download_file_with_mirrors(raw_download_url, yt_bin, progress_cb=_on_dl_pct, timeout=25)
 
-                # 获取新版本号（stdin=DEVNULL 避免管道继承卡死）
-                r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=10,
+            # 无论何种方式，最终通过 --version 验证实际生效版本
+            try:
+                r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
                                     stdin=subprocess.DEVNULL,
                                     creationflags=NO_WINDOW | 0x00004000)
                 new_ver = (r2.stdout or "").strip()
-                emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
-                reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
-            except Exception as e:
-                # 若抛出超时，兜底检查本地可执行文件是否实际上已经写入新版本
-                try:
-                    yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
-                    r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
-                                        stdin=subprocess.DEVNULL,
-                                        creationflags=NO_WINDOW | 0x00004000)
-                    new_ver = (r2.stdout or "").strip()
-                    if new_ver:
-                        emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
-                        reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
-                        return
-                except Exception:
-                    pass
-                reply(req.get("id"), ok=False, component="ytdlp", error=str(e))
+                if new_ver:
+                    emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
+                    reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
+                    return
+            except Exception:
+                pass
+
+            reply(req.get("id"), ok=False, component="ytdlp", error="更新失败：多源镜像重试均未成功，请检查网络连接")
         threading.Thread(target=_yt_worker, daemon=True).start()
     elif comp == "ffmpeg":
         threading.Thread(target=_cmd_ffmpeg_update, args=(req,), daemon=True).start()
@@ -678,7 +782,8 @@ def _cmd_ffmpeg_update(req):
             emit({"ev": "ffmpeg_progress", "stage": "download", "percent": 0})
             import urllib.request
             hreq = urllib.request.Request(FF_URL, headers={"User-Agent": "Mozilla/5.0"})
-            resp = urllib.request.urlopen(hreq, timeout=30)
+            proxy_opener = _get_proxy_opener()
+            resp = proxy_opener.open(hreq, timeout=60)
             total = int(resp.headers.get("Content-Length") or 0)
             got = 0
             with open(dst, "wb") as f:
