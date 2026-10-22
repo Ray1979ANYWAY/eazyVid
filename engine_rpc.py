@@ -455,6 +455,7 @@ def _cmd_check_updates(req):
         try:
             yt_bin = os.path.join(script, "yt-dlp.exe")
             r = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
+                               stdin=subprocess.DEVNULL,
                                creationflags=NO_WINDOW | 0x00004000)
             ytdlp_cur = (r.stdout or "").strip()
         except Exception:
@@ -564,17 +565,47 @@ def _cmd_update_component(req):
     if comp == "ytdlp":
         def _yt_worker():
             try:
-                emit({"ev": "component_progress", "component": "ytdlp", "percent": 50})
+                emit({"ev": "component_progress", "component": "ytdlp", "percent": 30})
                 yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
-                r = subprocess.run([yt_bin, "-U"], capture_output=True, text=True, timeout=120,
+                cmd = [yt_bin, "-U"]
+
+                # 自动继承系统/本地代理 (如 Clash 127.0.0.1:7897)，加速 GitHub Release 下载
+                try:
+                    import urllib.request
+                    proxies = urllib.request.getproxies()
+                    proxy_url = proxies.get("https") or proxies.get("http") or ""
+                    if proxy_url:
+                        cmd.extend(["--proxy", proxy_url])
+                except Exception:
+                    pass
+
+                # 增加超时到 300s，设置 stdin=DEVNULL 避免管道继承假死
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                   stdin=subprocess.DEVNULL,
                                    creationflags=NO_WINDOW | 0x00004000)
-                # 获取新版本号
-                r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
+                emit({"ev": "component_progress", "component": "ytdlp", "percent": 80})
+
+                # 获取新版本号（stdin=DEVNULL 避免管道继承卡死）
+                r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=10,
+                                    stdin=subprocess.DEVNULL,
                                     creationflags=NO_WINDOW | 0x00004000)
                 new_ver = (r2.stdout or "").strip()
                 emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
                 reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
             except Exception as e:
+                # 若抛出超时，兜底检查本地可执行文件是否实际上已经写入新版本
+                try:
+                    yt_bin = os.path.join(eazyvid.SCRIPT_DIR, "yt-dlp.exe")
+                    r2 = subprocess.run([yt_bin, "--version"], capture_output=True, text=True, timeout=5,
+                                        stdin=subprocess.DEVNULL,
+                                        creationflags=NO_WINDOW | 0x00004000)
+                    new_ver = (r2.stdout or "").strip()
+                    if new_ver:
+                        emit({"ev": "component_progress", "component": "ytdlp", "percent": 100})
+                        reply(req.get("id"), ok=True, component="ytdlp", version=new_ver)
+                        return
+                except Exception:
+                    pass
                 reply(req.get("id"), ok=False, component="ytdlp", error=str(e))
         threading.Thread(target=_yt_worker, daemon=True).start()
     elif comp == "ffmpeg":
