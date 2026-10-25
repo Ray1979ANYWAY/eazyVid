@@ -7,7 +7,11 @@ use tauri::{
     Emitter, Manager, WindowEvent,
 };
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
+static EXIT_ALLOWED: AtomicBool = AtomicBool::new(false);
 
 struct TrayMenuItems {
     show: MenuItem<tauri::Wry>,
@@ -17,6 +21,18 @@ struct TrayMenuItems {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn set_close_to_tray(close_to_tray: bool) {
+    CLOSE_TO_TRAY.store(close_to_tray, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn hide_window(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
 }
 
 #[tauri::command]
@@ -37,6 +53,7 @@ fn update_tray_lang(
 /// 前端确认退出（任务进行中的警告已由前端弹窗确认）→ 清引擎进程树 + 退出
 #[tauri::command]
 fn quit_confirmed(app: tauri::AppHandle) {
+    EXIT_ALLOWED.store(true, Ordering::SeqCst);
     Engine::shutdown(&app);
     app.exit(0);
 }
@@ -94,27 +111,32 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
+                .on_tray_icon_event(|tray, event| match event {
+                    TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
-                    } = event
-                    {
+                    }
+                    | TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
                         show_main(tray.app_handle());
                     }
+                    _ => {}
                 })
                 .build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 点关闭按钮 → 隐藏到托盘（不退出）；真退出走托盘菜单
+            // 点关闭按钮 → 默认隐藏到托盘（不退出）；若关闭了最小化到托盘则触发退出检查
             if let WindowEvent::CloseRequested { api, .. } = event {
-                let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\win_close.txt", "close-requested\n");
                 api.prevent_close();
-                let r = window.hide();
-                let _ = std::fs::write(r"D:\Documents\eazyVid\tmp\win_close.txt",
-                                       format!("hidden={:?}\n", r));
+                if CLOSE_TO_TRAY.load(Ordering::SeqCst) {
+                    let _ = window.hide();
+                } else {
+                    let _ = window.emit("app:quit-request", ());
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -122,14 +144,20 @@ pub fn run() {
             engine::engine_send,
             engine::engine_restart,
             quit_confirmed,
-            update_tray_lang
+            update_tray_lang,
+            set_close_to_tray,
+            hide_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { .. } = event {
-            Engine::shutdown(app_handle);
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if !EXIT_ALLOWED.load(Ordering::SeqCst) {
+                api.prevent_exit();
+            } else {
+                Engine::shutdown(app_handle);
+            }
         }
     });
 }

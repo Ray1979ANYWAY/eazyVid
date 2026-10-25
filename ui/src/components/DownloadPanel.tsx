@@ -196,7 +196,7 @@ function DlRow({
             value={t.compressMode ?? "none"}
             onChange={(m) => onMode?.(t, m)}
             options={dlModes}
-            disabled={t.status === "downloading" || t.status === "parsing" || t.status === "merging" || t.status === "done"}
+            disabled={t.status === "done" && Boolean(t.compressMode && t.compressMode !== "none")}
             tint={MODE_TINTS[t.compressMode ?? ""] ?? ""}
             className="w-full"
           />
@@ -732,7 +732,16 @@ export function DownloadPanel({
 
   /* 行压缩模式：默认"不压缩"，选了模式则下载完成后自动入压缩队列 */
   const setMode = (id: string, m: string) =>
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, compressMode: m } : t)));
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        // 若任务已下载完成且之前是"不压缩"，此时用户补选了压缩模式，则立即入压缩队列
+        if (t.status === "done" && (!t.compressMode || t.compressMode === "none") && m !== "none" && t.path) {
+          onCompress?.(t.path, t.name, m);
+        }
+        return { ...t, compressMode: m };
+      })
+    );
 
   const doneCount = useMemo(() => tasks.filter((t) => t.status === "done").length, [tasks]);
   const doneCountRef = useRef(onDoneCountChange);

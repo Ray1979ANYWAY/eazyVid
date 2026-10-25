@@ -88,7 +88,7 @@ export function SettingsDialog({
       onClose={onClose}
       title={t("settings.title")}
       width={600}
-      height={570}
+      height={620}
       footer={
         <div className="px-5 py-3 border-t border-border-soft bg-slate-50/60 dark:bg-slate-900/60 rounded-b-xl flex items-center justify-end">
           <button
@@ -195,6 +195,18 @@ export function SettingsDialog({
           <NumberField value={settings.compressWorkers} onChange={(v) => set({ compressWorkers: v })} min={1} max={16} />
           <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 ml-2 break-words">
             {t("settings.cmpWorkersHint")}
+          </div>
+        </FieldRow>
+
+        <div className="h-px bg-border-soft" />
+
+        {/* 窗口关闭行为：最小化到系统托盘 */}
+        <FieldRow label={t("settings.closeToTray")}>
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <Toggle checked={settings.closeToTray ?? true} onChange={(v) => set({ closeToTray: v })} />
+            <div className="text-[12px] text-text-sub leading-snug flex-1 min-w-0 break-words">
+              {t("settings.closeToTrayHint")}
+            </div>
           </div>
         </FieldRow>
       </div>

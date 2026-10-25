@@ -112,6 +112,7 @@ export type Settings = {
   overwrite: boolean; // 压缩后覆盖原文件（仅 outSame 可开）
   cover: boolean; // 封面开关
   coverSec: number; // 封面第 N 秒末帧（0 = 首帧）
+  closeToTray: boolean; // 关闭窗口时最小化到系统托盘（默认 true）
 };
 
 const DEFAULTS: Settings = {
@@ -125,6 +126,7 @@ const DEFAULTS: Settings = {
   overwrite: false,
   cover: false,
   coverSec: 5,
+  closeToTray: true,
 };
 
 const LS_KEY = "eazyvid.settings.v1";
@@ -202,6 +204,24 @@ function App() {
   const confirmQuit = () => {
     setQuitWarn(false);
     void invoke("quit_confirmed");
+  };
+
+  /* 同步“关闭时最小化到托盘”给 Rust 后端 */
+  useEffect(() => {
+    void invoke("set_close_to_tray", { closeToTray: settings.closeToTray ?? true }).catch(() => {});
+  }, [settings.closeToTray]);
+
+  /* 窗口右上角关闭按钮 */
+  const handleClose = () => {
+    if (settings.closeToTray ?? true) {
+      void invoke("hide_window").catch(() => {});
+    } else {
+      if (runningRef.current > 0) {
+        setQuitWarn(true);
+      } else {
+        void invoke("quit_confirmed");
+      }
+    }
   };
 
   /* 全局事件捕获探针：定位任何点击被谁拦截、命中什么元素 */
@@ -624,7 +644,7 @@ function App() {
           />
         </main>
       </div>
-      <WindowControls />
+      <WindowControls onClose={handleClose} />
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
