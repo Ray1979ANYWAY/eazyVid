@@ -136,8 +136,6 @@ const DICT = {
   "settings.cover": { "zh-CN": "抽帧生成封面", en: "Extract video cover" },
   "settings.coverPrefix": { "zh-CN": "以第", en: "Extract frame at" },
   "settings.coverSuffix": { "zh-CN": "秒末帧为封面", en: "seconds as cover thumbnail" },
-  "settings.closeToTray": { "zh-CN": "关闭窗口时最小化到系统托盘", en: "Minimize to system tray on window close" },
-  "settings.closeToTrayHint": { "zh-CN": "避免误触关闭导致下载与压缩任务中断", en: "Keep tasks running in background when closed" },
 
   // About & Sponsor
   "about.title": { "zh-CN": "关于 eazyVid", en: "About eazyVid" },

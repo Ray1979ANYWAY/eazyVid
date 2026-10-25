@@ -10,7 +10,6 @@ use tauri::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 static EXIT_ALLOWED: AtomicBool = AtomicBool::new(false);
 
 struct TrayMenuItems {
@@ -21,18 +20,6 @@ struct TrayMenuItems {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
-fn set_close_to_tray(close_to_tray: bool) {
-    CLOSE_TO_TRAY.store(close_to_tray, Ordering::SeqCst);
-}
-
-#[tauri::command]
-fn hide_window(app: tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
-    }
 }
 
 #[tauri::command]
@@ -129,14 +116,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 点关闭按钮 → 默认隐藏到托盘（不退出）；若关闭了最小化到托盘则触发退出检查
+            // 点关闭按钮 → 隐藏到托盘（不退出）；真退出走托盘菜单
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                if CLOSE_TO_TRAY.load(Ordering::SeqCst) {
-                    let _ = window.hide();
-                } else {
-                    let _ = window.emit("app:quit-request", ());
-                }
+                let _ = window.hide();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -144,9 +127,7 @@ pub fn run() {
             engine::engine_send,
             engine::engine_restart,
             quit_confirmed,
-            update_tray_lang,
-            set_close_to_tray,
-            hide_window
+            update_tray_lang
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

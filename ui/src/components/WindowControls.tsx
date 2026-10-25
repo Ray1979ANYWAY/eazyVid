@@ -12,7 +12,7 @@ const win: Window | null = (() => {
 })();
 
 /* 无边框窗口的右上角控制组：最小化 / 最大化(还原) / 关闭 */
-export function WindowControls({ onClose }: { onClose?: () => void } = {}) {
+export function WindowControls() {
   const { t } = useI18n();
   const [maximized, setMaximized] = useState(false);
 
@@ -68,10 +68,7 @@ export function WindowControls({ onClose }: { onClose?: () => void } = {}) {
         className="group inline-flex items-center justify-center w-[46px] h-full transition-colors cursor-pointer text-white/75 hover:bg-[#e81123] hover:text-white active:bg-[#c50f1f]"
         aria-label={t("win.close")}
         title={t("win.close")}
-        onClick={() => {
-          if (onClose) onClose();
-          else void win?.close();
-        }}
+        onClick={() => void win?.close()}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
           <path d="M1.5 1.5l9 9m0-9l-9 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
