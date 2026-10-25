@@ -94,6 +94,11 @@ def cookie_args(force=False):
     CDP 调用同步且可达 1~2 秒，缓存 120 秒：探测/嗅探的后台线程已取过，
     下载启动（主线程）直接命中缓存，避免界面卡顿。
     force=True：跳过缓存强制重取（探测报 Fresh cookies 时的重试）。"""
+    # 优先检测程序目录下的自定义 cookies.txt（支持用户导出 Netscape 格式 cookies 文件绕过反爬与年龄认证）
+    custom_cookie = os.path.join(SCRIPT_DIR, "cookies.txt")
+    if os.path.isfile(custom_cookie) and os.path.getsize(custom_cookie) > 0:
+        return ["--cookies", custom_cookie]
+
     now = time.time()
     if not force and _COOKIE_CACHE["path"] and now - _COOKIE_CACHE["ts"] < 120:
         return ["--cookies", _COOKIE_CACHE["path"]]
