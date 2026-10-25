@@ -996,19 +996,25 @@ def main():
             if cmd == "ping":
                 reply(req.get("id"), ok=True, pid=os.getpid())
             elif cmd == "probe":
-                info, err = eazyvid.probe_url(req.get("url", ""), req.get("timeout", 90),
+                url = req.get("url", "")
+                info, err = eazyvid.probe_url(url, req.get("timeout", 90),
                                               req.get("force_cookie", False))
-                if err:
-                    fmts, err2 = eazyvid.probe_formats_f(req.get("url", ""), req.get("timeout", 90),
+                fmts = eazyvid.extract_formats(info) if info else []
+                # 若 -J 未解析到可用格式（或失败），使用 -F 格式表兜底（对齐 download.py 行为）
+                if not fmts:
+                    fmts2, err2 = eazyvid.probe_formats_f(url, req.get("timeout", 90),
                                                           req.get("force_cookie", False))
-                    if err2:
-                        reply(req.get("id"), ok=False, error=err2)
+                    if fmts2:
+                        reply(req.get("id"), ok=True, formats=fmts2, title=info.get("title") if info else "", source="F")
                     else:
-                        reply(req.get("id"), ok=True, formats=fmts, title="", source="F")
+                        reply(req.get("id"), ok=False, error=err or err2 or "未解析到可用格式")
                 else:
-                    fmts = eazyvid.extract_formats(info)
                     title = info.get("title") or ""
                     reply(req.get("id"), ok=True, formats=fmts, title=title, source="J")
+            elif cmd == "open_login":
+                target_url = req.get("url", "").strip() or "about:blank"
+                ok, err = eazyvid.open_login_window(target_url)
+                reply(req.get("id"), ok=ok, error=err)
             elif cmd == "dl_add":
                 _cmd_dl_add(req)
             elif cmd == "dl_pause":

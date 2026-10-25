@@ -600,8 +600,8 @@ export function DownloadPanel({
         setProbeErr(String(r.error || t("dl.errNone")));
         return;
       }
-      // 过滤纯音频流（vcodec=none），只展示视频格式
-      const fmts = r.formats.filter((f) => String(f.vcodec) !== "none");
+      // 过滤纯音频流（vcodec=none 且无有效分辨率），保留所有视频流（包含 vcodec 为 unknown 的通用媒体流）
+      const fmts = r.formats.filter((f) => String(f.vcodec) !== "none" || Boolean(f.res && f.res !== "none"));
       if (!fmts.length) {
         setProbeState("idle");
         setProbeErr(t("dl.errAudioOnly"));
@@ -612,6 +612,16 @@ export function DownloadPanel({
     } catch (e) {
       setProbeState("idle");
       setProbeErr(String(e instanceof Error ? e.message : e));
+    }
+  };
+
+  /* 打开极简登录/嗅探窗口（Chrome/Edge --app 模式，无任何导航栏干扰，极度简约） */
+  const openLoginWindow = async () => {
+    const u = url.trim();
+    try {
+      await engine.call("open_login", { url: u });
+    } catch (e) {
+      console.error("Failed to open login window", e);
     }
   };
 
@@ -890,7 +900,7 @@ export function DownloadPanel({
           </div>
           <div className="max-h-[300px] overflow-y-auto">
             {formats.length === 0 ? (
-              <div className="flex items-center justify-center h-14 text-[13px] text-text-sub/70 gap-1.5">
+              <div className="flex items-center justify-center min-h-[56px] text-[13px] text-text-sub/70 gap-1.5 p-2">
                 {probeState === "probing" ? (
                   <>
                     <svg width="13" height="13" viewBox="0 0 24 24" className="ez-spin" style={{ color: "#005CE6" }}>
@@ -900,7 +910,38 @@ export function DownloadPanel({
                     {t("dl.parsingFormats")}
                   </>
                 ) : probeErr ? (
-                  <span className="text-warn">{t("dl.probeFailed", { err: probeErr })}</span>
+                  /authentication|cookie|403|forbidden|blocked|login/i.test(probeErr) ? (
+                    <div className="w-full flex flex-col items-center text-center py-2 px-3 my-0.5 rounded-lg bg-surface/50 border border-border-soft/60">
+                      <div className="flex items-center gap-1.5 text-brand-600 dark:text-brand-400 font-medium text-[13px]">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span>{t("dl.authRequiredTitle")}</span>
+                      </div>
+                      <p className="mt-1 text-[12px] text-text-sub max-w-[580px] leading-relaxed">
+                        {t("dl.authRequiredDesc")}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Button
+                          size="sm"
+                          onClick={openLoginWindow}
+                          className="h-7 px-3 text-[12px] gap-1"
+                        >
+                          <Icon d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" size={13} />
+                          {t("dl.openLoginBtn")}
+                        </Button>
+                        <button
+                          onClick={probe}
+                          className="h-7 px-3 rounded-lg border border-border-soft bg-card hover:bg-surface text-text-main text-[12px] font-medium transition-colors cursor-pointer"
+                        >
+                          {t("dl.retryProbeBtn")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-warn text-center px-4 leading-relaxed">{t("dl.probeFailed", { err: probeErr })}</span>
+                  )
                 ) : (
                   <>{t("dl.formatsPlaceholder")}</>
                 )}

@@ -199,16 +199,45 @@ def probe_formats_f(url, timeout=90, force_cookie=False):
 
 def extract_formats(info):
     out = []
-    for f in info.get("formats", []):
+    raw_formats = info.get("formats") if info else None
+    if not raw_formats and info and info.get("entries"):
+        for entry in info["entries"]:
+            if entry and entry.get("formats"):
+                raw_formats = entry["formats"]
+                break
+            elif entry and (entry.get("url") or entry.get("id")):
+                ext = (entry.get("ext") or "mp4").lower()
+                height = entry.get("height") or 0
+                w = entry.get('width') or 0
+                res = f"{w}x{height}" if (w and height) else (entry.get("resolution") or (f"{height}p" if height else "720p"))
+                out.append({
+                    "id": entry.get("format_id") or entry.get("id") or "best",
+                    "ext": ext,
+                    "res": str(res),
+                    "vcodec": entry.get("vcodec") or "unknown",
+                    "acodec": entry.get("acodec") or "unknown",
+                    "size": entry.get("filesize") or entry.get("filesize_approx"),
+                    "note": entry.get("title") or "",
+                })
+        if out:
+            out.sort(key=lambda x: x["vcodec"] == "none")
+            return out
+
+    if not raw_formats:
+        return []
+
+    for f in raw_formats:
         vid = f.get("vcodec") or "none"
         aud = f.get("acodec") or "none"
-        if vid == "none" and aud == "none":
-            continue
+        ext = (f.get("ext") or "").lower()
         height = f.get("height") or 0
-        if height:
-            res = f"{f.get('width') or 0}x{height}"
-        else:
-            res = f.get("format_note") or f.get("resolution") or ""
+        w = f.get('width') or 0
+        res = f"{w}x{height}" if (w and height) else (f.get("resolution") or (f"{height}p" if height else (f.get("format_note") or "")))
+        if vid == "none" and aud == "none":
+            if height or f.get("resolution") or ext in ("mp4", "webm", "mkv", "mov", "flv", "m3u8", "ts"):
+                vid = "unknown"
+            else:
+                continue
         size = f.get("filesize") or f.get("filesize_approx")
         out.append({
             "id": f.get("format_id", ""),
@@ -221,6 +250,29 @@ def extract_formats(info):
         })
     out.sort(key=lambda x: x["vcodec"] == "none")
     return out
+
+def open_login_window(url=""):
+    browser = find_browser()
+    if not browser:
+        return False, "未找到 Chrome 或 Edge 浏览器"
+    os.makedirs(CHROME_PROFILE, exist_ok=True)
+    target = url if (url.startswith("http://") or url.startswith("https://")) else "about:blank"
+    cmd = [
+        browser,
+        f"--user-data-dir={CHROME_PROFILE}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-sync",
+        "--disable-features=ExtensionsToolbarMenu,Translate,ReadingList,BookmarkBar",
+        f"--app={target}",
+    ]
+    try:
+        subprocess.Popen(cmd, creationflags=0x00004000)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 
 def format_size(b):
     if not b:
