@@ -88,7 +88,7 @@ export function SettingsDialog({
       onClose={onClose}
       title={t("settings.title")}
       width={600}
-      height={570}
+      height={590}
       footer={
         <div className="px-5 py-3 border-t border-border-soft bg-slate-50/60 dark:bg-slate-900/60 rounded-b-xl flex items-center justify-end">
           <button
@@ -116,6 +116,13 @@ export function SettingsDialog({
               className="w-full"
             />
           </div>
+        </FieldRow>
+
+        <div className="h-px bg-border-soft" />
+
+        {/* 任务运行时阻止主机休眠 */}
+        <FieldRow label={t("settings.preventSleep")}>
+          <Toggle checked={settings.preventSleep ?? true} onChange={(v) => set({ preventSleep: v })} />
         </FieldRow>
 
         <div className="h-px bg-border-soft" />
@@ -158,9 +165,7 @@ export function SettingsDialog({
           </FieldRow>
         )}
 
-        <div className="h-px bg-border-soft" />
-
-        {/* 抽帧生成封面：独立设置项，无论输出目录如何设置、无论是否覆盖原文件均始终显示并可配置 */}
+        {/* 压缩后抽帧生成封面：与上面的压缩设置归为一组（去掉了中间的分割线） */}
         <FieldRow label={t("settings.cover")}>
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <Toggle checked={settings.cover} onChange={(v) => set({ cover: v })} />

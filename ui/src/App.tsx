@@ -104,6 +104,7 @@ function GlobalFooter({
 export type Settings = {
   theme?: "light" | "dark";
   lang: LangSetting; // 界面语言：system 跟随系统 | zh-CN 简体中文 | en 英文
+  preventSleep: boolean; // 任务运行时阻止主机休眠（默认 true）
   dlWorkers: number;
   compressWorkers: number;
   dlDir: string; // 下载目录；空 = 引擎默认（安装目录\downloaded）
@@ -117,6 +118,7 @@ export type Settings = {
 const DEFAULTS: Settings = {
   theme: "light",
   lang: "system",
+  preventSleep: true,
   dlWorkers: 3,
   compressWorkers: 3,
   dlDir: "",
@@ -203,6 +205,13 @@ function App() {
     setQuitWarn(false);
     void invoke("quit_confirmed");
   };
+
+  /* 任务运行时阻止主机休眠（下载或压缩有活动任务时，调用 Windows API 阻止系统休眠） */
+  useEffect(() => {
+    const isBusy = dlAct.busy || cmpAct.busy || dlAct.running > 0 || cmpAct.running > 0;
+    const shouldPrevent = (settings.preventSleep ?? true) && isBusy;
+    void invoke("set_prevent_sleep", { prevent: shouldPrevent }).catch(() => {});
+  }, [settings.preventSleep, dlAct.busy, cmpAct.busy, dlAct.running, cmpAct.running]);
 
   /* 全局事件捕获探针：定位任何点击被谁拦截、命中什么元素 */
   useEffect(() => {

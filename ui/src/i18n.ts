@@ -115,6 +115,7 @@ const DICT = {
   "settings.langSystem": { "zh-CN": "跟随系统", en: "System Default" },
   "settings.langZh": { "zh-CN": "简体中文", en: "简体中文" },
   "settings.langEn": { "zh-CN": "English", en: "English" },
+  "settings.preventSleep": { "zh-CN": "任务运行时阻止主机休眠", en: "Prevent system sleep while tasks are running" },
   "settings.updateCheck": { "zh-CN": "软件与组件", en: "Software & Components" },
   "settings.updateCheckBtn": { "zh-CN": "检查更新", en: "Check for Updates" },
   "settings.updateCheckHint": { "zh-CN": "检查主程序、下载核心及转码内核最新稳定版本", en: "Check latest stable releases for app and core engines" },
@@ -133,7 +134,7 @@ const DICT = {
   "settings.cmpWorkers": { "zh-CN": "同时压缩数", en: "Concurrent Compressions" },
   "settings.cmpWorkersHint": { "zh-CN": "建议不超过 3", en: "Recommended ≤ 3" },
   "settings.overwrite": { "zh-CN": "压缩后覆盖原文件", en: "Overwrite original file after compression" },
-  "settings.cover": { "zh-CN": "抽帧生成封面", en: "Extract video cover" },
+  "settings.cover": { "zh-CN": "压缩后抽帧生成封面", en: "Extract video cover after compression" },
   "settings.coverPrefix": { "zh-CN": "以第", en: "Extract frame at" },
   "settings.coverSuffix": { "zh-CN": "秒末帧为封面", en: "seconds as cover thumbnail" },
 

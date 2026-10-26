@@ -17,6 +17,29 @@ struct TrayMenuItems {
     quit: MenuItem<tauri::Wry>,
 }
 
+#[cfg(target_os = "windows")]
+unsafe extern "system" {
+    fn SetThreadExecutionState(esFlags: u32) -> u32;
+}
+
+#[cfg(target_os = "windows")]
+const ES_CONTINUOUS: u32 = 0x80000000;
+#[cfg(target_os = "windows")]
+const ES_SYSTEM_REQUIRED: u32 = 0x00000001;
+
+/// 任务运行时阻止/允许主机休眠
+#[tauri::command]
+fn set_prevent_sleep(prevent: bool) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        if prevent {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+        } else {
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -40,6 +63,10 @@ fn update_tray_lang(
 /// 前端确认退出（任务进行中的警告已由前端弹窗确认）→ 清引擎进程树 + 退出
 #[tauri::command]
 fn quit_confirmed(app: tauri::AppHandle) {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        SetThreadExecutionState(ES_CONTINUOUS);
+    }
     EXIT_ALLOWED.store(true, Ordering::SeqCst);
     Engine::shutdown(&app);
     app.exit(0);
@@ -127,7 +154,8 @@ pub fn run() {
             engine::engine_send,
             engine::engine_restart,
             quit_confirmed,
-            update_tray_lang
+            update_tray_lang,
+            set_prevent_sleep
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
