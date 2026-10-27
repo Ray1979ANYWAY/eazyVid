@@ -45,7 +45,7 @@ function FormatRow({ f, onDownload }: { f: DlFormat; onDownload: (f: DlFormat) =
 
   return (
     <div
-      className="grid grid-cols-[100px_75px_85px_105px_1fr_80px] items-center h-12 px-3 rounded-lg border border-transparent
+      className="grid grid-cols-[100px_75px_85px_105px_1fr_80px] items-center h-11 px-3 rounded-lg border border-transparent
         hover:border-border-brand hover:bg-brand-50/50 transition-colors cursor-default"
       style={{ background: hover ? undefined : undefined }}
       onMouseEnter={() => setHover(true)}
@@ -898,7 +898,7 @@ export function DownloadPanel({
             <div>{t("dl.col.tip")}</div>
             <div className="text-right pr-1">{t("dl.col.action")}</div>
           </div>
-          <div className="max-h-[300px] overflow-y-auto">
+          <div className="max-h-[230px] overflow-y-auto">
             {formats.length === 0 ? (
               <div className="flex items-center justify-center min-h-[56px] text-[13px] text-text-sub/70 gap-1.5 p-2">
                 {probeState === "probing" ? (
